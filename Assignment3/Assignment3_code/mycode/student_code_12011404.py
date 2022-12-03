@@ -45,29 +45,31 @@ def get_tiny_images(image_paths):
     feats = []
 
     #############################################################################
-    # TODO: YOUR CODE HERE         
+    # TODO: YOUR CODE HERE
     # raise NotImplementedError('`get_tiny_images` function in ' +
-                        #       '`student_code.py` needs to be implemented')                                             #
+    #       '`student_code.py` needs to be implemented')                                             #
     #############################################################################
     w, h = 16, 16
-    N, d = len(image_paths), w*h
+    N, d = len(image_paths), w * h
     feats = np.zeros((len(image_paths), d))
+
     def process(i, path):
         image = load_image_gray(path)
         feat = cv2.resize(image, (16, 16)).reshape(1, -1)
-        feat = (feat-np.mean(feat))/np.std(feat)
+        feat = (feat - np.mean(feat)) / np.std(feat)
         feats[i, :] = feat
+
     pool = ThreadPool(16)
     pool.map(lambda i: process(i, image_paths[i]), range(N))
     pool.close()
-    pool.join()    
+    pool.join()
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
 
     return feats
 
-
+from sklearn.cluster import MiniBatchKMeans
 def build_vocabulary(image_paths, vocab_size):
     """
     This function will sample SIFT descriptors from the training images,
@@ -98,10 +100,12 @@ def build_vocabulary(image_paths, vocab_size):
                  your vocabulary.
 
     Args:
-    -   image_paths: list of image paths.
-    -   vocab_size: size of vocabulary
+    -   image_paths: list of image paths. 这是训练的图片路径
+    -   vocab_size: size of vocabulary. 这是词汇表的大小
 
     Returns:
+    d是特征数量。 
+    词汇表的含义是 未来的图片的特征有这里的特征相加得到。
     -   vocab: This is a vocab_size x d numpy array (vocabulary). Each row is a
         cluster center / visual word
     """
@@ -121,15 +125,25 @@ def build_vocabulary(image_paths, vocab_size):
 
     # length of the SIFT descriptors that you are going to compute.
     dim = 128
-    vocab = np.zeros((vocab_size, dim))
-
+    vocab = np.zeros((vocab_size, dim))    
     #############################################################################
     # TODO: YOUR CODE HERE                                                      #
+    # raise NotImplementedError('`build_vocabulary` function in ' +
+    #       '`student_code.py` needs to be implemented')
     #############################################################################
-
-    raise NotImplementedError('`build_vocabulary` function in ' +
-                              '`student_code.py` needs to be implemented') 
-
+    N = len(image_paths)
+    model = MiniBatchKMeans(n_clusters=vocab_size, init='k-means++', random_state=0)
+    def process(i, path):
+        nonlocal model
+        image = load_image_gray(path)
+        frames, descriptors = vlfeat.sift.dsift(image,
+         step=5, fast=True) # N x 128
+        model = model.partial_fit(descriptors)
+    pool = ThreadPool(32)
+    pool.map(lambda i: process(i, image_paths[i]), range(N))
+    pool.close()
+    pool.join()
+    vocab = model.cluster_centers_
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -189,7 +203,7 @@ def get_bags_of_sifts(image_paths, vocab_filename):
             histogram (vocab_size) below.
     """
     # load vocabulary
-    with open(vocab_filename, 'rb') as f:
+    with open(vocab_filename, "rb") as f:
         vocab = pickle.load(f)
 
     # dummy features variable
@@ -199,9 +213,9 @@ def get_bags_of_sifts(image_paths, vocab_filename):
     # TODO: YOUR CODE HERE                                                      #
     #############################################################################
 
-    raise NotImplementedError('`get_bags_of_sifts` function in ' +
-                              '`student_code.py` needs to be implemented')
-    
+    raise NotImplementedError(
+        "`get_bags_of_sifts` function in " + "`student_code.py` needs to be implemented"
+    )
 
     #############################################################################
     #                             END OF YOUR CODE                              #
@@ -209,9 +223,13 @@ def get_bags_of_sifts(image_paths, vocab_filename):
 
     return feats
 
+
 from scipy import stats
-def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats,
-                              metric='euclidean', k=5):
+
+
+def nearest_neighbor_classify(
+    train_image_feats, train_labels, test_image_feats, metric="euclidean", k=5
+):
     """
     This function will predict the category for every test image by finding
     the training image with most similar features. Instead of 1 nearest
@@ -248,15 +266,21 @@ def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats,
     test_labels = []
 
     #############################################################################
-    # TODO: YOUR CODE HERE       
-#     raise NotImplementedError('`nearest_neighbor_classify` function in ' +
-                        #       '`student_code.py` needs to be implemented')                                               #
+    # TODO: YOUR CODE HERE
+    #     raise NotImplementedError('`nearest_neighbor_classify` function in ' +
+    #       '`student_code.py` needs to be implemented')                                               #
     #############################################################################
-    D = sklearn_pairwise.pairwise_distances(train_image_feats, test_image_feats,metric=metric, n_jobs=32)
-    
-    nearest = np.argsort(D, axis=1)[:, :k].astype(int) # 保留排序索引。 保留前k个最小的。
-    neighbour_labels = np.array(train_labels)[nearest] # 变成nearest的形状，每个值被train_labels映射。
-    test_labels = stats.mode(neighbour_labels, axis=1,nan_policy='raise').mode.squeeze()
+    D = sklearn_pairwise.pairwise_distances(
+        train_image_feats, test_image_feats, metric=metric, n_jobs=32
+    )
+
+    nearest = np.argsort(D, axis=1)[:, :k].astype(int)  # 保留排序索引。 保留前k个最小的。
+    neighbour_labels = np.array(train_labels)[
+        nearest
+    ]  # 变成nearest的形状，每个值被train_labels映射。
+    test_labels = stats.mode(
+        neighbour_labels, axis=1, nan_policy="raise"
+    ).mode.squeeze()
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -295,8 +319,10 @@ def svm_classify(train_image_feats, train_labels, test_image_feats):
     categories = list(set(train_labels))
 
     # construct 1 vs all SVMs for each category
-    svms = {cat: LinearSVC(random_state=0, tol=1e-3, loss='hinge', C=5)
-            for cat in categories}
+    svms = {
+        cat: LinearSVC(random_state=0, tol=1e-3, loss="hinge", C=5)
+        for cat in categories
+    }
 
     test_labels = []
 
@@ -304,8 +330,9 @@ def svm_classify(train_image_feats, train_labels, test_image_feats):
     # TODO: YOUR CODE HERE                                                      #
     #############################################################################
 
-    raise NotImplementedError('`svm_classify` function in ' +
-                              '`student_code.py` needs to be implemented')
+    raise NotImplementedError(
+        "`svm_classify` function in " + "`student_code.py` needs to be implemented"
+    )
 
     #############################################################################
     #                             END OF YOUR CODE                              #
