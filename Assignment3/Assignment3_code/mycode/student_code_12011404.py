@@ -256,7 +256,7 @@ def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats,
     
     nearest = np.argsort(D, axis=1)[:, :k].astype(int) # 保留排序索引。 保留前k个最小的。
     neighbour_labels = np.array(train_labels)[nearest] # 变成nearest的形状，每个值被train_labels映射。
-    test_labels = stats.mode(neighbour_labels, axis=1).mode.squeeze()
+    test_labels = stats.mode(neighbour_labels, axis=1,nan_policy='raise').mode.squeeze()
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
