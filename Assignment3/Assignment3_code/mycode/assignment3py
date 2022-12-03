@@ -55,6 +55,9 @@ train_image_paths, test_image_paths, train_labels, test_labels = get_image_paths
                                                                                  categories,
                                                                                  num_train_per_cat);
 
+# %%
+len(train_image_paths)
+len(test_image_paths)
 # %% [markdown]
 # ## Section 1: Tiny Image features with Nearest Neighbor classifier
 

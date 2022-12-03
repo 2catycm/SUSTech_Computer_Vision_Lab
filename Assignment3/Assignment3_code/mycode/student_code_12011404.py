@@ -69,8 +69,13 @@ def get_tiny_images(image_paths):
 
     return feats
 
+
 from sklearn.cluster import MiniBatchKMeans
-def build_vocabulary(image_paths, vocab_size):
+
+from threading import Lock
+
+
+def build_vocabulary(image_paths, vocab_size, threads=32):
     """
     This function will sample SIFT descriptors from the training images,
     cluster them with kmeans, and then return the cluster centers.
@@ -104,7 +109,7 @@ def build_vocabulary(image_paths, vocab_size):
     -   vocab_size: size of vocabulary. 这是词汇表的大小
 
     Returns:
-    d是特征数量。 
+    d是特征数量。
     词汇表的含义是 未来的图片的特征有这里的特征相加得到。
     -   vocab: This is a vocab_size x d numpy array (vocabulary). Each row is a
         cluster center / visual word
@@ -125,21 +130,28 @@ def build_vocabulary(image_paths, vocab_size):
 
     # length of the SIFT descriptors that you are going to compute.
     dim = 128
-    vocab = np.zeros((vocab_size, dim))    
+    vocab = np.zeros((vocab_size, dim))
     #############################################################################
     # TODO: YOUR CODE HERE                                                      #
     # raise NotImplementedError('`build_vocabulary` function in ' +
     #       '`student_code.py` needs to be implemented')
     #############################################################################
     N = len(image_paths)
-    model = MiniBatchKMeans(n_clusters=vocab_size, init='k-means++', random_state=0)
+    # 为了允许并行计算，使用 partial fit
+    model = MiniBatchKMeans(n_clusters=vocab_size, init="k-means++", random_state=0)
+    temp_lock = Lock()  # partial fit 线程不安全
+
     def process(i, path):
         nonlocal model
         image = load_image_gray(path)
-        frames, descriptors = vlfeat.sift.dsift(image,
-         step=5, fast=True) # N x 128
-        model = model.partial_fit(descriptors)
-    pool = ThreadPool(32)
+        frames, descriptors = vlfeat.sift.dsift(
+            image, step=5, fast=True, float_descriptors=True, norm=True
+        )  # N x 128
+        with temp_lock:
+            model = model.partial_fit(descriptors)
+        # model = model.partial_fit(descriptors)
+
+    pool = ThreadPool(threads)
     pool.map(lambda i: process(i, image_paths[i]), range(N))
     pool.close()
     pool.join()
@@ -151,7 +163,26 @@ def build_vocabulary(image_paths, vocab_size):
     return vocab
 
 
-def get_bags_of_sifts(image_paths, vocab_filename):
+def build_vocabulary_no_parallel(image_paths, vocab_size):
+    dim = 128
+    vocab = np.zeros((vocab_size, dim))
+    model = MiniBatchKMeans(n_clusters=vocab_size, init="k-means++", random_state=0)
+
+    def process(i, path):
+        nonlocal model
+        image = load_image_gray(path)
+        frames, descriptors = vlfeat.sift.dsift(
+            image, step=5, fast=True, float_descriptors=True, norm=True
+        )  # N x 128
+        model = model.partial_fit(descriptors)
+
+    for i, path in enumerate(image_paths):
+        process(i, path)
+    vocab = model.cluster_centers_
+    return vocab
+
+
+def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
     """
     This feature representation is described in the handout, lecture
     materials, and Szeliski chapter 14.
@@ -206,17 +237,35 @@ def get_bags_of_sifts(image_paths, vocab_filename):
     with open(vocab_filename, "rb") as f:
         vocab = pickle.load(f)
 
+    dim = vocab.shape[0]  # 单词的数量是新的特征的数量
+    N = len(image_paths)
     # dummy features variable
-    feats = []
+    feats = np.zeros((N, dim))
 
     #############################################################################
     # TODO: YOUR CODE HERE                                                      #
+    # raise NotImplementedError(
+    # "`get_bags_of_sifts` function in " + "`student_code.py` needs to be implemented"
+    # )
     #############################################################################
+    def process(i, path):
+        image = load_image_gray(path)
+        frames, descriptors = vlfeat.sift.dsift(
+            image, step=1, fast=True, float_descriptors=True, norm=True
+        )  # N x 128
+        assignments = vlfeat.kmeans.kmeans_quantize(
+            descriptors, vocab
+        )  # M x 1. M是sift特征的个数
+        #  必须加1。因为histogram的bins是左闭右开的，所以最后一个bin的右边界是vocab_size
+        hist, _ = np.histogram(
+            assignments, bins=range(vocab.shape[0] + 1), density=True
+        )  # 统计cluster数量。density使得hist与bins的内积是1。 
+        feats[i, :] = hist
 
-    raise NotImplementedError(
-        "`get_bags_of_sifts` function in " + "`student_code.py` needs to be implemented"
-    )
-
+    pool = ThreadPool(threads)
+    pool.map(lambda i: process(i, image_paths[i]), range(N))
+    pool.close()
+    pool.join()
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
