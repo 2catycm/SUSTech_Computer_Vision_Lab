@@ -12,6 +12,8 @@ from cyvlfeat.sift.dsift import dsift
 from cyvlfeat.kmeans import kmeans
 from time import time
 
+from multiprocessing.dummy import Pool as ThreadPool
+
 
 def get_tiny_images(image_paths):
     """
@@ -47,11 +49,18 @@ def get_tiny_images(image_paths):
     # raise NotImplementedError('`get_tiny_images` function in ' +
                         #       '`student_code.py` needs to be implemented')                                             #
     #############################################################################
-    def process(path):
+    w, h = 16, 16
+    N, d = len(image_paths), w*h
+    feats = np.zeros((len(image_paths), d))
+    def process(i, path):
         image = load_image_gray(path)
-        feat = cv2.resize(image, (16, 16))
-        return feat.reshape(1, -1)
-    feats = [process(path) for path in image_paths]
+        feat = cv2.resize(image, (16, 16)).reshape(1, -1)
+        # feat = (feat-np.mean(feat))/np.std(feat)
+        feats[i, :] = feat
+    pool = ThreadPool(16)
+    pool.map(lambda i: process(i, image_paths[i]), range(N))
+    pool.close()
+    pool.join()    
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -200,9 +209,9 @@ def get_bags_of_sifts(image_paths, vocab_filename):
 
     return feats
 
-
+from scipy import stats
 def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats,
-                              metric='euclidean'):
+                              metric='euclidean', k=5):
     """
     This function will predict the category for every test image by finding
     the training image with most similar features. Instead of 1 nearest
@@ -239,12 +248,15 @@ def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats,
     test_labels = []
 
     #############################################################################
-    # TODO: YOUR CODE HERE                                                      #
+    # TODO: YOUR CODE HERE       
+#     raise NotImplementedError('`nearest_neighbor_classify` function in ' +
+                        #       '`student_code.py` needs to be implemented')                                               #
     #############################################################################
-
-    raise NotImplementedError('`nearest_neighbor_classify` function in ' +
-                              '`student_code.py` needs to be implemented')
+    D = sklearn_pairwise.pairwise_distances(train_image_feats, test_image_feats,metric=metric, n_jobs=32)
     
+    nearest = np.argsort(D, axis=1)[:, :k].astype(int) # 保留排序索引。 保留前k个最小的。
+    neighbour_labels = np.array(train_labels)[nearest] # 变成nearest的形状，每个值被train_labels映射。
+    test_labels = stats.mode(neighbour_labels, axis=1).mode.squeeze()
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
