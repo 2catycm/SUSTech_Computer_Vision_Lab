@@ -55,7 +55,7 @@ def get_tiny_images(image_paths):
     def process(i, path):
         image = load_image_gray(path)
         feat = cv2.resize(image, (16, 16)).reshape(1, -1)
-        # feat = (feat-np.mean(feat))/np.std(feat)
+        feat = (feat-np.mean(feat))/np.std(feat)
         feats[i, :] = feat
     pool = ThreadPool(16)
     pool.map(lambda i: process(i, image_paths[i]), range(N))
