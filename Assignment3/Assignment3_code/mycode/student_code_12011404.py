@@ -337,7 +337,12 @@ def nearest_neighbor_classify(
     return test_labels
 
 
-def svm_classify(train_image_feats, train_labels, test_image_feats):
+import time
+from concurrent import futures
+from tqdm import tqdm
+
+
+def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
     """
     This function will train a linear SVM for every category (i.e. one vs all)
     and then use the learned linear classifiers to predict the category of
@@ -377,14 +382,28 @@ def svm_classify(train_image_feats, train_labels, test_image_feats):
 
     #############################################################################
     # TODO: YOUR CODE HERE                                                      #
+    # raise NotImplementedError(
+    # "`svm_classify` function in " + "`student_code.py` needs to be implemented"
+    # )
     #############################################################################
-
-    raise NotImplementedError(
-        "`svm_classify` function in " + "`student_code.py` needs to be implemented"
-    )
-
+    tasks, results = [], np.zeros((len(categories), test_image_feats.shape[0]))
+    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
+        def process(i, cat):
+            svms[cat].fit(train_image_feats, train_labels == cat)
+            results[i, :] = svms[cat].decision_function(test_image_feats)
+        for i, cat in enumerate(categories):
+            tasks.append(
+                executor.submit(
+                    process,
+                    i, cat
+                )
+            )
+        for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
+            pass # 等待所有任务完成
+    test_labels = np.array(categories)[np.argmax(results, axis=0)] # 每一列是测试样本的多个分类的预测结果
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
 
     return test_labels
+
