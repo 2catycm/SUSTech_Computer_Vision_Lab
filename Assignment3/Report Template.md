@@ -1,24 +1,22 @@
-# Computer Vision Assignment Report
+# Experiments on Bag of Visual Words for Scene Recognition
 
-Title: 
+# Computer Vision Assignment 3 Report
 
 Student Name: 叶璨铭
 
 Student ID: 12011404
 
-
-
-### 1. Experimental Design
-
-
-
-
-
-### 2. Experimental Results Analysis
+## Experimental Design
 
 
 
 
 
-### 3. Bonus Report (If you have done any bonus problem, state them here)
+## Experimental Results Analysis
+
+
+
+
+
+## Bonus Report (If you have done any bonus problem, state them here)
 
