@@ -370,6 +370,7 @@ def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
             predicted category for each testing image
     """
     # categories
+    train_labels = np.array(train_labels)
     categories = list(set(train_labels))
 
     # construct 1 vs all SVMs for each category
