@@ -79,7 +79,7 @@ def get_tiny_images(image_paths):
 from sklearn.cluster import MiniBatchKMeans
 
 from threading import Lock
-
+from queue import Queue
 
 def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
     """
@@ -146,26 +146,46 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
     # 为了允许并行计算，使用 partial fit
     model = MiniBatchKMeans(n_clusters=vocab_size, init="k-means++", random_state=0)
     temp_lock = Lock()  # partial fit 线程不安全
-
-    def process(i, path):
-        nonlocal model
+    descriptor_channel = Queue(maxsize=threads * 2)
+    def producer(i, path):
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
             image, step=5, fast=True, float_descriptors=True, norm=True
         )  # N x 128
-        with temp_lock:
-            model = model.partial_fit(descriptors)
-    tasks = []
-    with futures.ProcessPoolExecutor(max_workers=threads) as executor:
+        descriptor_channel.put(descriptors)
+    producer_done = False
+    def consumer():
+        print("consumer start")
+        while not (producer_done and descriptor_channel.empty()):
+            print("consumer get")
+            descriptors = descriptor_channel.get()
+            print("consumer get done")
+            with temp_lock:
+                model.partial_fit(descriptors)
+            descriptor_channel.task_done()
+    producer_tasks = []
+    comsumer_tasks = []
+    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
         for i, path in enumerate(image_paths):
-            tasks.append(
+            producer_tasks.append(
                 executor.submit(
-                    process,
+                    producer,
                     i, path
                 )
             )
-        for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
+        for i in range(threads):
+            comsumer_tasks.append(
+                executor.submit(
+                    consumer
+                )
+            )
+        print("producer_tasks", len(producer_tasks)/16)
+        for task in tqdm(futures.as_completed(producer_tasks), total=len(producer_tasks)):
             pass # 等待所有任务完成
+        producer_done = True
+        print("producer_done: ", producer_done)
+        for task in tqdm(futures.as_completed(comsumer_tasks), total=len(comsumer_tasks)):
+            pass
     vocab = model.cluster_centers_
 
     #############################################################################
