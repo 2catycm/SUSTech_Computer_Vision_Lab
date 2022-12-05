@@ -13,7 +13,13 @@ from cyvlfeat.kmeans import kmeans
 from time import time
 
 from multiprocessing.dummy import Pool as ThreadPool
+from sklearn.base import BaseEstimator, ClassifierMixin
+from abc import ABCMeta, abstractmethod
 
+class SiftClassifier(ClassifierMixin, BaseEstimator, metaclass=ABCMeta):
+    def __init__(self, *args, priors=None):
+        pass
+        
 
 def get_tiny_images(image_paths):
     """
@@ -75,7 +81,7 @@ from sklearn.cluster import MiniBatchKMeans
 from threading import Lock
 
 
-def build_vocabulary(image_paths, vocab_size, threads=32):
+def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
     """
     This function will sample SIFT descriptors from the training images,
     cluster them with kmeans, and then return the cluster centers.
@@ -149,13 +155,19 @@ def build_vocabulary(image_paths, vocab_size, threads=32):
         )  # N x 128
         with temp_lock:
             model = model.partial_fit(descriptors)
-        # model = model.partial_fit(descriptors)
-
-    pool = ThreadPool(threads)
-    pool.map(lambda i: process(i, image_paths[i]), range(N))
-    pool.close()
-    pool.join()
+    tasks = []
+    with futures.ProcessPoolExecutor(max_workers=threads) as executor:
+        for i, path in enumerate(image_paths):
+            tasks.append(
+                executor.submit(
+                    process,
+                    i, path
+                )
+            )
+        for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
+            pass # 等待所有任务完成
     vocab = model.cluster_centers_
+
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -375,7 +387,8 @@ def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
 
     # construct 1 vs all SVMs for each category
     svms = {
-        cat: LinearSVC(random_state=0, tol=1e-3, loss="hinge", C=5)
+        cat: LinearSVC(random_state=0, 
+        tol=1e-3, loss="hinge", C=1.0)
         for cat in categories
     }
 
