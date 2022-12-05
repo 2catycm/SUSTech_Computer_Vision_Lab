@@ -1,0 +1,3 @@
+[submodule "Assignment3/Assignment3_code/mycode/PythonSIFT"]
+	path = Assignment3/Assignment3_code/mycode/PythonSIFT
+	url = https://github.com/rmislam/PythonSIFT.git
