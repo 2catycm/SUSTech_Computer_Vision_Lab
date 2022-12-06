@@ -76,10 +76,14 @@ def get_tiny_images(image_paths):
     return feats
 
 
-from sklearn.cluster import MiniBatchKMeans
+from sklearn.cluster import MiniBatchKMeans, KMeans
 
 from threading import Lock
 from queue import Queue
+import time
+from concurrent import futures
+from tqdm import tqdm
+
 
 def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
     """
@@ -146,7 +150,8 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
     # 为了允许并行计算，使用 partial fit
     model = MiniBatchKMeans(n_clusters=vocab_size, init="k-means++", random_state=0)
     temp_lock = Lock()  # partial fit 线程不安全
-    descriptor_channel = Queue(maxsize=threads * 2)
+    # descriptor_channel = Queue(maxsize=threads * 2)
+    descriptor_channel = Queue()
     def producer(i, path):
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
@@ -155,17 +160,17 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
         descriptor_channel.put(descriptors)
     producer_done = False
     def consumer():
-        print("consumer start")
+        # print("consumer start")
         while not (producer_done and descriptor_channel.empty()):
-            print("consumer get")
+            # print("consumer get")
             descriptors = descriptor_channel.get()
-            print("consumer get done")
+            # print("consumer get done")
             with temp_lock:
                 model.partial_fit(descriptors)
             descriptor_channel.task_done()
     producer_tasks = []
     comsumer_tasks = []
-    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
+    with futures.ThreadPoolExecutor(max_workers=len(image_paths)*3) as executor:
         for i, path in enumerate(image_paths):
             producer_tasks.append(
                 executor.submit(
@@ -173,17 +178,23 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
                     i, path
                 )
             )
-        for i in range(threads):
+
+        for i in range(len(image_paths)*2):
             comsumer_tasks.append(
                 executor.submit(
                     consumer
                 )
             )
-        print("producer_tasks", len(producer_tasks)/16)
+
+
+        print("producer_tasks", len(producer_tasks))
         for task in tqdm(futures.as_completed(producer_tasks), total=len(producer_tasks)):
             pass # 等待所有任务完成
         producer_done = True
         print("producer_done: ", producer_done)
+
+        
+        
         for task in tqdm(futures.as_completed(comsumer_tasks), total=len(comsumer_tasks)):
             pass
     vocab = model.cluster_centers_
@@ -194,26 +205,65 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
 
     return vocab
 
-
+# from kmeans_pytorch import kmeans
+# import torch
 def build_vocabulary_no_parallel(image_paths, vocab_size):
     dim = 128
+    descriptors_queue = []
+    def process(i, path):
+        nonlocal descriptors_queue
+        image = load_image_gray(path)
+        frames, descriptors = vlfeat.sift.dsift(
+            image, step=5, fast=True, float_descriptors=True, norm=True
+        )  # N x 128
+        descriptors_queue+=descriptors.tolist()
+    paths = tqdm(enumerate(image_paths))
+    for i, path in paths:
+        paths.set_description(f"processing the {i}th image. ")
+        process(i, path)
+    
+    # kmeans
+    # cluster_ids_x, cluster_centers = kmeans(
+    #     X=torch.Tensor(descriptors_queue), num_clusters=vocab_size, distance='euclidean', device=torch.device('cuda:0')
+    # )
+    # vocab = cluster_centers
+    cluster_centers = vlfeat.kmeans.kmeans(np.array(descriptors_queue), vocab_size)
+    vocab = cluster_centers
+    return vocab
+def build_vocabulary_parrallel(image_paths, vocab_size, threads=32, sift_param=None):
+    dim = 128
     vocab = np.zeros((vocab_size, dim))
+    #############################################################################
+    # TODO: YOUR CODE HERE                                                      #
+    # raise NotImplementedError('`build_vocabulary` function in ' +
+    #       '`student_code.py` needs to be implemented')
+    #############################################################################
+    N = len(image_paths)
+    # 为了允许并行计算，使用 partial fit
     model = MiniBatchKMeans(n_clusters=vocab_size, init="k-means++", random_state=0)
-
+    temp_lock = Lock()  # partial fit 线程不安全
     def process(i, path):
         nonlocal model
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
             image, step=5, fast=True, float_descriptors=True, norm=True
         )  # N x 128
-        model = model.partial_fit(descriptors)
-
-    for i, path in enumerate(image_paths):
-        process(i, path)
+        with temp_lock:
+            model = model.partial_fit(descriptors)
+    tasks = []
+    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
+        for i, path in enumerate(image_paths):
+            tasks.append(
+                executor.submit(
+                    process,
+                    i, path
+                )
+            )
+        for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
+            pass # 等待所有任务完成
     vocab = model.cluster_centers_
     return vocab
-
-
+import multiprocessing
 def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
     """
     This feature representation is described in the handout, lecture
@@ -283,7 +333,7 @@ def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
     def process(i, path):
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
-            image, step=1, fast=True, float_descriptors=True, norm=True
+            image, step=5, fast=True, float_descriptors=True, norm=True
         )  # N x 128
         assignments = vlfeat.kmeans.kmeans_quantize(
             descriptors, vocab
@@ -294,10 +344,20 @@ def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
         )  # 统计cluster数量。density使得hist与bins的内积是1。 
         feats[i, :] = hist
 
-    pool = ThreadPool(threads)
-    pool.map(lambda i: process(i, image_paths[i]), range(N))
-    pool.close()
-    pool.join()
+    tasks = []
+    with futures.ProcessPoolExecutor(max_workers=threads) as executor:
+        for i, path in enumerate(image_paths):
+            tasks.append(
+                executor.submit(
+                    process,
+                    i, path
+                )
+            )
+        t_tasks = tqdm(futures.as_completed(tasks), total=len(tasks))
+        for i, task in enumerate(t_tasks):
+            t_tasks.set_description(f"processing the {i}th image. ")
+            pass # 等待所有任务完成
+        
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -369,9 +429,7 @@ def nearest_neighbor_classify(
     return test_labels
 
 
-import time
-from concurrent import futures
-from tqdm import tqdm
+
 
 
 def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
