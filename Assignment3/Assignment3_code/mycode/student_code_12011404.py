@@ -12,14 +12,6 @@ from cyvlfeat.sift.dsift import dsift
 from cyvlfeat.kmeans import kmeans
 from time import time
 
-from multiprocessing.dummy import Pool as ThreadPool
-from sklearn.base import BaseEstimator, ClassifierMixin
-from abc import ABCMeta, abstractmethod
-
-class SiftClassifier(ClassifierMixin, BaseEstimator, metaclass=ABCMeta):
-    def __init__(self, *args, priors=None):
-        pass
-        
 
 def get_tiny_images(image_paths):
     """
@@ -152,13 +144,16 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
     temp_lock = Lock()  # partial fit 线程不安全
     # descriptor_channel = Queue(maxsize=threads * 2)
     descriptor_channel = Queue()
+
     def producer(i, path):
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
             image, step=5, fast=True, float_descriptors=True, norm=True
         )  # N x 128
         descriptor_channel.put(descriptors)
+
     producer_done = False
+
     def consumer():
         # print("consumer start")
         while not (producer_done and descriptor_channel.empty()):
@@ -168,9 +163,10 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
             with temp_lock:
                 model.partial_fit(descriptors)
             descriptor_channel.task_done()
+
     producer_tasks = []
     comsumer_tasks = []
-    with futures.ThreadPoolExecutor(max_workers=len(image_paths)*3) as executor:
+    with futures.ThreadPoolExecutor(max_workers=len(image_paths) * 3) as executor:
         for i, path in enumerate(image_paths):
             producer_tasks.append(
                 executor.submit(
@@ -179,22 +175,19 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
                 )
             )
 
-        for i in range(len(image_paths)*2):
+        for i in range(len(image_paths) * 2):
             comsumer_tasks.append(
                 executor.submit(
                     consumer
                 )
             )
 
-
         print("producer_tasks", len(producer_tasks))
         for task in tqdm(futures.as_completed(producer_tasks), total=len(producer_tasks)):
-            pass # 等待所有任务完成
+            pass  # 等待所有任务完成
         producer_done = True
         print("producer_done: ", producer_done)
 
-        
-        
         for task in tqdm(futures.as_completed(comsumer_tasks), total=len(comsumer_tasks)):
             pass
     vocab = model.cluster_centers_
@@ -205,23 +198,26 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
 
     return vocab
 
+
 # from kmeans_pytorch import kmeans
 # import torch
 def build_vocabulary_no_parallel(image_paths, vocab_size):
     dim = 128
     descriptors_queue = []
+
     def process(i, path):
         nonlocal descriptors_queue
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
             image, step=5, fast=True, float_descriptors=True, norm=True
         )  # N x 128
-        descriptors_queue+=descriptors.tolist()
+        descriptors_queue += descriptors.tolist()
+
     paths = tqdm(enumerate(image_paths))
     for i, path in paths:
         paths.set_description(f"processing the {i}th image. ")
         process(i, path)
-    
+
     # kmeans
     # cluster_ids_x, cluster_centers = kmeans(
     #     X=torch.Tensor(descriptors_queue), num_clusters=vocab_size, distance='euclidean', device=torch.device('cuda:0')
@@ -230,6 +226,8 @@ def build_vocabulary_no_parallel(image_paths, vocab_size):
     cluster_centers = vlfeat.kmeans.kmeans(np.array(descriptors_queue), vocab_size)
     vocab = cluster_centers
     return vocab
+
+
 def build_vocabulary_parrallel(image_paths, vocab_size, threads=32, sift_param=None):
     dim = 128
     vocab = np.zeros((vocab_size, dim))
@@ -242,6 +240,7 @@ def build_vocabulary_parrallel(image_paths, vocab_size, threads=32, sift_param=N
     # 为了允许并行计算，使用 partial fit
     model = MiniBatchKMeans(n_clusters=vocab_size, init="k-means++", random_state=0)
     temp_lock = Lock()  # partial fit 线程不安全
+
     def process(i, path):
         nonlocal model
         image = load_image_gray(path)
@@ -250,6 +249,7 @@ def build_vocabulary_parrallel(image_paths, vocab_size, threads=32, sift_param=N
         )  # N x 128
         with temp_lock:
             model = model.partial_fit(descriptors)
+
     tasks = []
     with futures.ThreadPoolExecutor(max_workers=threads) as executor:
         for i, path in enumerate(image_paths):
@@ -260,11 +260,16 @@ def build_vocabulary_parrallel(image_paths, vocab_size, threads=32, sift_param=N
                 )
             )
         for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
-            pass # 等待所有任务完成
+            pass  # 等待所有任务完成
+    # print(tasks[0].result())
     vocab = model.cluster_centers_
     return vocab
+
+
 import multiprocessing
-def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
+
+
+def get_bags_of_sifts(image_paths, vocab_filename, step=5, threads=32, vocab=None):
     """
     This feature representation is described in the handout, lecture
     materials, and Szeliski chapter 14.
@@ -316,8 +321,9 @@ def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
             histogram (vocab_size) below.
     """
     # load vocabulary
-    with open(vocab_filename, "rb") as f:
-        vocab = pickle.load(f)
+    if vocab is None:
+        with open(vocab_filename, "rb") as f:
+            vocab = pickle.load(f)
 
     dim = vocab.shape[0]  # 单词的数量是新的特征的数量
     N = len(image_paths)
@@ -330,7 +336,7 @@ def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
     # "`get_bags_of_sifts` function in " + "`student_code.py` needs to be implemented"
     # )
     #############################################################################
-    def process(i, path):
+    def process_get_bags_of_sifts(i, path):
         image = load_image_gray(path)
         frames, descriptors = vlfeat.sift.dsift(
             image, step=5, fast=True, float_descriptors=True, norm=True
@@ -345,19 +351,19 @@ def get_bags_of_sifts(image_paths, vocab_filename, threads=32):
         feats[i, :] = hist
 
     tasks = []
-    with futures.ProcessPoolExecutor(max_workers=threads) as executor:
+    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
         for i, path in enumerate(image_paths):
             tasks.append(
                 executor.submit(
-                    process,
+                    process_get_bags_of_sifts,
                     i, path
                 )
             )
         t_tasks = tqdm(futures.as_completed(tasks), total=len(tasks))
         for i, task in enumerate(t_tasks):
             t_tasks.set_description(f"processing the {i}th image. ")
-            pass # 等待所有任务完成
-        
+            pass  # 等待所有任务完成
+
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
@@ -369,7 +375,7 @@ from scipy import stats
 
 
 def nearest_neighbor_classify(
-    train_image_feats, train_labels, test_image_feats, metric="euclidean", k=5
+        train_image_feats, train_labels, test_image_feats, metric="euclidean", k=5
 ):
     """
     This function will predict the category for every test image by finding
@@ -429,9 +435,6 @@ def nearest_neighbor_classify(
     return test_labels
 
 
-
-
-
 def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
     """
     This function will train a linear SVM for every category (i.e. one vs all)
@@ -465,8 +468,8 @@ def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
 
     # construct 1 vs all SVMs for each category
     svms = {
-        cat: LinearSVC(random_state=0, 
-        tol=1e-3, loss="hinge", C=1.0)
+        cat: LinearSVC(random_state=0,
+                       tol=1e-3, loss="hinge", C=1.0)
         for cat in categories
     }
 
@@ -483,6 +486,7 @@ def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
         def process(i, cat):
             svms[cat].fit(train_image_feats, train_labels == cat)
             results[i, :] = svms[cat].decision_function(test_image_feats)
+
         for i, cat in enumerate(categories):
             tasks.append(
                 executor.submit(
@@ -491,11 +495,54 @@ def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
                 )
             )
         for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
-            pass # 等待所有任务完成
-    test_labels = np.array(categories)[np.argmax(results, axis=0)] # 每一列是测试样本的多个分类的预测结果
+            pass  # 等待所有任务完成
+    test_labels = np.array(categories)[np.argmax(results, axis=0)]  # 每一列是测试样本的多个分类的预测结果
     #############################################################################
     #                             END OF YOUR CODE                              #
     #############################################################################
 
     return test_labels
 
+
+## 实现sklearn接口
+from multiprocessing.dummy import Pool as ThreadPool
+from sklearn.base import BaseEstimator, ClassifierMixin
+from abc import ABCMeta, abstractmethod
+import joblib
+from joblib import memory
+
+memory = joblib.Memory('./tmp', verbose=0)
+
+c_build_vocabulary_parrallel = memory.cache(build_vocabulary_parrallel)
+c_get_bags_of_sifts = memory.cache(get_bags_of_sifts)
+c_svm_classify = memory.cache(svm_classify)
+
+
+class SiftClassifier(ClassifierMixin, BaseEstimator, metaclass=ABCMeta):
+    def __init__(self, vocab_size=100, step_size=10):
+        self.parameters = {'vocab_size': vocab_size, 'step_size': step_size}
+
+    def fit(self, X, y):
+        self.parameters['vocab'] = c_build_vocabulary_parrallel(X, self.parameters['vocab_size'],
+                                                                2 * self.parameters['step_size'])
+        self.parameters['train_feats'] = c_get_bags_of_sifts(X, '', self.parameters['step_size'], 32,
+                                                             self.parameters['vocab'])
+        self.parameters['train_labels'] = y
+        return self
+
+    def get_params(self, deep=False):
+        """为了网格搜索调参，需要实现这个函数。假装是sk家族的一员。"""
+        return self.parameters
+
+    def set_params(self, **parameters):
+        self.parameters = parameters
+
+    def predict(self, X):
+        test_feats = c_get_bags_of_sifts(X, '', self.parameters['step_size'], 32, self.parameters['vocab'])
+        return c_svm_classify(self.parameters['train_feats'], self.parameters['train_labels'], test_feats)
+
+    def predict_proba(self, X):
+        raise NotImplementedError("predict_proba is not implemented")
+
+    def score(self, X, y):
+        return np.mean(self.predict(X) == y)

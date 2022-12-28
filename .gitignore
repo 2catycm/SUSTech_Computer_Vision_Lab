@@ -1,6 +1,7 @@
 .idea
 .vscode
 .fleet
+deploy/
 data/
 datasets/
 dataset/
