@@ -1,0 +1,16 @@
+name: A4
+channels:
+- menpo
+- defaults
+dependencies:
+- jupyter
+- matplotlib
+- python=3.6
+- scikit-learn
+- scikit-image
+- scipy
+- numpy
+- cyvlfeat
+- pip
+- pip:
+  - opencv-python
