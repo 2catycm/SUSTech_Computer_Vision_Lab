@@ -6,13 +6,15 @@ from glob import glob
 from random import shuffle
 from sklearn.svm import LinearSVC
 
+import cv2
+
 
 def get_positive_features(train_path_pos, feature_params):
     """
     This function should return all positive training examples (faces) from
     36x36 images in 'train_path_pos'. Each face should be converted into a
     HoG template according to 'feature_params'.
-
+    从36x36的图像中提取所有的正样本（是人脸的样本），
     Useful functions:
     -   vlfeat.hog.hog(im, cell_size): computes HoG features
 
@@ -35,25 +37,46 @@ def get_positive_features(train_path_pos, feature_params):
             dimensionality, which would be (feature_params['template_size'] /
             feature_params['hog_cell_size'])^2 * 31 if you're using the default
             hog parameters.
+            注意这里的计算，是将36x36的图像，分成6x6的小块，每个小块有31个特征，所以总共有36/6*36/6*31=1764个特征
     """
     # params for HOG computation
     win_size = feature_params.get('template_size', 36)
-    cell_size = feature_params.get('hog_cell_size', 6)
+    cell_size = feature_params.get('hog_cell_size', 6)  # 一个grid cell的大小。
 
     positive_files = glob(osp.join(train_path_pos, '*.jpg'))
+    ###########################################################################
+    #                           YOUR CODE HERE                          #
+    ###########################################################################
 
-    ###########################################################################
-    #                           TODO: YOUR CODE HERE                          #
-    ###########################################################################
+    n_cell = np.ceil(win_size / cell_size).astype('int')  # 有几个grid cell。
+    N = len(positive_files)
     
-    n_cell = np.ceil(win_size/cell_size).astype('int')
-    feats = np.random.rand(len(positive_files), n_cell*n_cell*31)
+    # https://blog.csdn.net/qq_36852276/article/details/94293375
+    block_size = feature_params.get('hog_block_size', 18)  
+    block_stride = feature_params.get('hog_block_stride', 2)  
+    nbins = feature_params.get('hog_nbins', 9)
+
+    hog = cv2.HOGDescriptor(win_size,block_size,block_stride,cell_size,
+                            nbins,
+    )
+                        #     derivAperture,winSigma, histogramNormType,L2HysThreshold,gammaCorrection,nlevels)
+
+    # 思路步骤：1. 使用数据增强。将原始数据进行旋转，平移，缩放，镜像等操作，得到更多的正样本  2. 使用HOG特征提取器，提取特征。
+    for file in positive_files:
+        img = cv2.imread(file)
+        hog_feature = hog.compute(img)
+        hog_feature = hog_feature.reshape(-1, hog_feature.shape[0])
+        if 'feats' not in locals():
+            feats = hog_feature
+        else:
+            feats = np.vstack((feats, hog_feature))
 
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
 
     return feats
+
 
 def get_random_negative_features(non_face_scn_path, feature_params, num_samples):
     """
@@ -91,14 +114,15 @@ def get_random_negative_features(non_face_scn_path, feature_params, num_samples)
     #                           TODO: YOUR CODE HERE                          #
     ###########################################################################
 
-    n_cell = np.ceil(win_size/cell_size).astype('int')
-    feats = np.random.rand(len(negative_files), n_cell*n_cell*31)
+    n_cell = np.ceil(win_size / cell_size).astype('int')
+    feats = np.random.rand(len(negative_files), n_cell * n_cell * 31)
 
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
 
     return feats
+
 
 def train_classifier(features_pos, features_neg, C):
     """
@@ -120,13 +144,14 @@ def train_classifier(features_pos, features_neg, C):
     #                           TODO: YOUR CODE HERE                          #
     ###########################################################################
 
-    svm = PseudoSVM(10,features_pos.shape[1])
+    svm = PseudoSVM(10, features_pos.shape[1])
 
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
 
     return svm
+
 
 def mine_hard_negs(non_face_scn_path, svm, feature_params):
     """
@@ -160,14 +185,15 @@ def mine_hard_negs(non_face_scn_path, svm, feature_params):
     #                           TODO: YOUR CODE HERE                          #
     ###########################################################################
 
-    n_cell = np.ceil(win_size/cell_size).astype('int')
-    feats = np.random.rand(len(negative_files), n_cell*n_cell*31)
-    
+    n_cell = np.ceil(win_size / cell_size).astype('int')
+    feats = np.random.rand(len(negative_files), n_cell * n_cell * 31)
+
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
 
     return feats
+
 
 def run_detector(test_scn_path, svm, feature_params, verbose=False):
     """
@@ -240,12 +266,12 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False):
         #                        TODO: YOUR CODE HERE                         #
         #######################################################################
 
-        cur_x_min = (np.random.rand(15,1) * im_shape[1]).astype('int')
-        cur_y_min = (np.random.rand(15,1) * im_shape[0]).astype('int')
+        cur_x_min = (np.random.rand(15, 1) * im_shape[1]).astype('int')
+        cur_y_min = (np.random.rand(15, 1) * im_shape[0]).astype('int')
         cur_bboxes = np.hstack([cur_x_min, cur_y_min, \
-            (cur_x_min + np.random.rand(15,1)*50).astype('int'), \
-            (cur_y_min + np.random.rand(15,1)*50).astype('int')])
-        cur_confidences = np.random.rand(15)*4 - 2
+                                (cur_x_min + np.random.rand(15, 1) * 50).astype('int'), \
+                                (cur_y_min + np.random.rand(15, 1) * 50).astype('int')])
+        cur_confidences = np.random.rand(15) * 4 - 2
 
         #######################################################################
         #                          END OF YOUR CODE                           #
@@ -265,7 +291,7 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False):
         cur_confidences = cur_confidences[idsort]
 
         is_valid_bbox = non_max_suppression_bbox(cur_bboxes, cur_confidences,
-            im_shape, verbose=verbose)
+                                                 im_shape, verbose=verbose)
 
         print('NMS done, {:d} detections passed'.format(sum(is_valid_bbox)))
         cur_bboxes = cur_bboxes[is_valid_bbox]
