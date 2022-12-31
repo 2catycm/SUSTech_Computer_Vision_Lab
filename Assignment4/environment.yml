@@ -1,11 +1,15 @@
 name: A4
 channels:
-- menpo
+- https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/free/
+- https://mirrors.tuna.tsinghua.edu.cn/anaconda/pkgs/main/
+- https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud/menpo/
+- https://mirrors.tuna.tsinghua.edu.cn/anaconda/cloud//pytorch/
+# - menpo
 - defaults
 dependencies:
 - jupyter
 - matplotlib
-- python=3.6
+- python=3.8
 - scikit-learn
 - scikit-image
 - scipy

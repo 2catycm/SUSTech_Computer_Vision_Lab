@@ -15,6 +15,7 @@ def load_image(path):
     return im
 
 
+
 def load_image_gray(path):
     im = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     im = im.astype(np.float32)  # for vlfeat functions

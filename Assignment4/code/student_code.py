@@ -1,5 +1,10 @@
+from concurrent import futures
+
 import numpy as np
 import cyvlfeat as vlfeat
+from tqdm import tqdm
+
+from augmentation import Augmentor
 from utils import *
 import os.path as osp
 from glob import glob
@@ -8,8 +13,13 @@ from sklearn.svm import LinearSVC
 
 import cv2
 
+import joblib
 
-def get_positive_features(train_path_pos, feature_params):
+memory = joblib.Memory('./joblib_tmp', verbose=1)
+
+
+@memory.cache
+def get_positive_features(train_path_pos, feature_params, threads=32):
     """
     This function should return all positive training examples (faces) from
     36x36 images in 'train_path_pos'. Each face should be converted into a
@@ -40,45 +50,67 @@ def get_positive_features(train_path_pos, feature_params):
             注意这里的计算，是将36x36的图像，分成6x6的小块，每个小块有31个特征，所以总共有36/6*36/6*31=1764个特征
     """
     # params for HOG computation
-    win_size = feature_params.get('template_size', 36)
-    cell_size = feature_params.get('hog_cell_size', 6)  # 一个grid cell的大小。
+    win_size = feature_params.get('template_size', 36)  # 图像的大小，改不了。
+    cell_size = feature_params.get('hog_cell_size', 6)  # 一个grid cell的大小。是36的因数。
+    num_orientations = feature_params.get('num_orientations ', 9)
+    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
 
     positive_files = glob(osp.join(train_path_pos, '*.jpg'))
     ###########################################################################
     #                           YOUR CODE HERE                          #
     ###########################################################################
 
-    n_cell = np.ceil(win_size / cell_size).astype('int')  # 有几个grid cell。
+    n_cell = win_size // cell_size  # 有几个grid cell。
     N = len(positive_files)
-    
-    # https://blog.csdn.net/qq_36852276/article/details/94293375
-    block_size = feature_params.get('hog_block_size', 18)  
-    block_stride = feature_params.get('hog_block_stride', 2)  
-    nbins = feature_params.get('hog_nbins', 9)
 
-    hog = cv2.HOGDescriptor(win_size,block_size,block_stride,cell_size,
-                            nbins,
-    )
-                        #     derivAperture,winSigma, histogramNormType,L2HysThreshold,gammaCorrection,nlevels)
+    hog = vlfeat.hog
+    augmentation_num = feature_params.get('augmentation_num', 2)
+    augmentor = Augmentor(augmentation_num)
+    feats = np.zeros((N * augmentation_num, n_cell * n_cell * 31), np.float32)
 
-    # 思路步骤：1. 使用数据增强。将原始数据进行旋转，平移，缩放，镜像等操作，得到更多的正样本  2. 使用HOG特征提取器，提取特征。
-    for file in positive_files:
-        img = cv2.imread(file)
-        hog_feature = hog.compute(img)
-        hog_feature = hog_feature.reshape(-1, hog_feature.shape[0])
-        if 'feats' not in locals():
-            feats = hog_feature
-        else:
-            feats = np.vstack((feats, hog_feature))
+    def process(i, file):
+        # 使用数据增强。将原始数据进行旋转，平移，缩放，镜像等操作，得到更多的正样本
+        for j, image in enumerate(augmentor.gen_augmented_image(cv2.imread(file))):
+            # 使用HOG特征提取器，提取特征。
+            hog_feature = hog.hog(cv_image2vl_image(image),
+                                  cell_size=cell_size,
+                                  n_orientations=num_orientations,
+                                  bilinear_interpolation=bilinear_interpolation)
+            index = i * augmentation_num + j
+            feats[index] = hog_feature.reshape(-1)
 
+    tasks = []
+    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
+        # 遍历所有的正样本。注意不是遍历train_path_pos，而是glob的结果——positive_files。
+        for i, path in enumerate(positive_files):
+            tasks.append(
+                executor.submit(
+                    process,
+                    i, path
+                )
+            )
+        for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
+            pass  # 等待所有任务完成
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
-
     return feats
 
 
-def get_random_negative_features(non_face_scn_path, feature_params, num_samples):
+def cv_image2vl_image(image):
+    """
+    This function converts an image from cv2 format to vlfeat format.
+    Args:
+    -   image: H x W x 3 image in cv2 format
+    Returns:
+    -   image: H x W x 3 image in vlfeat format
+    """
+    return image[:, :, ::-1].astype(np.float32)
+
+
+# 使用memory cache注意debug的时候要注释掉，不然会用上次的错误结果。
+@memory.cache
+def get_random_negative_features(non_face_scn_path, feature_params, num_samples, threads=32):
     """
     This function should return negative training examples (non-faces) from any
     images in 'non_face_scn_path'. Images should be loaded in grayscale because
@@ -107,16 +139,53 @@ def get_random_negative_features(non_face_scn_path, feature_params, num_samples)
     # params for HOG computation
     win_size = feature_params.get('template_size', 36)
     cell_size = feature_params.get('hog_cell_size', 6)
+    num_orientations = feature_params.get('num_orientations ', 9)  # 注意名字和hog里面不一样。
+    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
 
     negative_files = glob(osp.join(non_face_scn_path, '*.jpg'))
 
     ###########################################################################
-    #                           TODO: YOUR CODE HERE                          #
+    #                           YOUR CODE HERE                          #
     ###########################################################################
 
-    n_cell = np.ceil(win_size / cell_size).astype('int')
-    feats = np.random.rand(len(negative_files), n_cell * n_cell * 31)
+    n_cell = win_size // cell_size
+    N = len(negative_files)
 
+    sample_per_files = num_samples // N
+
+    feats = np.zeros((sample_per_files * N, n_cell * n_cell * 31), np.float32)
+
+    def process(i, file):
+        image = load_image_gray(file)
+        # 如果不够大，就不能采样，先变大。
+        h, w = image.shape
+        if h < win_size or w < win_size:  # 实际上没有这样的样本。
+            image = cv2.resize(image, (max(win_size, h), max(win_size, w)))
+            # 随机采样
+        for j in range(sample_per_files):
+            x = np.random.randint(0, w - win_size)
+            y = np.random.randint(0, h - win_size)
+            patch = image[y:y + win_size, x:x + win_size]
+            hog_feature = vlfeat.hog.hog(patch,
+                                         cell_size=cell_size,
+                                         n_orientations=num_orientations,
+                                         bilinear_interpolation=bilinear_interpolation
+                                         )
+            index = i * sample_per_files + j  # 注意不是num_samples
+            feats[index] = hog_feature.reshape(-1)
+
+    tasks = []
+    with futures.ThreadPoolExecutor(max_workers=threads) as executor:
+        # 遍历所有的正样本。注意不是遍历train_path_pos，而是glob的结果——positive_files。
+        for i, path in enumerate(negative_files):
+            tasks.append(
+                executor.submit(
+                    process,
+                    i, path
+                )
+            )
+        for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
+            pass  # 等待所有任务完成
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
