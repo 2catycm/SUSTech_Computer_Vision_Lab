@@ -97,7 +97,7 @@ def build_vocabulary(image_paths, vocab_size, threads=32, sift_param=None):
           compute. Also, be sure not to use the default value of step size. It
           will be very slow and you'll see relatively little performance gain
           from extremely dense sampling. You are welcome to use your own SIFT
-          feature code! It will probably be slower, though.
+          feature Assignment4! It will probably be slower, though.
     -   cluster_centers = vlfeat.kmeans.kmeans(X, K)
             http://www.vlfeat.org/matlab/vl_kmeans.html
               -  X is a N x d numpy array of sampled SIFT features, where N is
@@ -296,7 +296,7 @@ def get_bags_of_sifts(image_paths, vocab_filename, step=5, threads=32, vocab=Non
             to compute. Also, be sure not to use the default value of step size.
             It will be very slow and you'll see relatively little performance
             gain from extremely dense sampling. You are welcome to use your own
-            SIFT feature code! It will probably be slower, though.
+            SIFT feature Assignment4! It will probably be slower, though.
     -   assignments = vlfeat.kmeans.kmeans_quantize(data, vocab)
             finds the cluster assigments for features in data
               -  data is a M x d matrix of image features
@@ -400,7 +400,7 @@ def nearest_neighbor_classify(
             the ground truth category for each training image
     -   test_image_feats: M x d numpy array, where d is the dimensionality of the
             feature representation. You can assume N = M, unless you have changed
-            the starter code
+            the starter Assignment4
     -   metric: (optional) metric to be used for nearest neighbor.
             Can be used to select different distance functions. The default
             metric, 'euclidean' is fine for tiny images. 'chi2' tends to work
@@ -457,7 +457,7 @@ def svm_classify(train_image_feats, train_labels, test_image_feats, threads=32):
             ground truth category for each training image
     -   test_image_feats: M x d numpy array, where d is the dimensionality of the
             feature representation. You can assume N = M, unless you have changed
-            the starter code
+            the starter Assignment4
     Returns:
     -   test_labels: M element list, where each entry is a string indicating the
             predicted category for each testing image
