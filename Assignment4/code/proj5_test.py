@@ -23,7 +23,7 @@ from utils import *
 import student_code as sc
 
 # %%
-data_path = osp.join('..','data')
+data_path = osp.join('..', 'data')
 # Positive training examples. 36x36 head crops
 train_path_pos = osp.join(data_path, 'caltech_faces', 'Caltech_CropFaces')
 # Mine random or hard negatives from here
@@ -87,9 +87,9 @@ label_vector = np.hstack((np.ones(len(features_pos)), -np.ones(len(features_neg)
 face_confs = confidences[label_vector > 0]
 non_face_confs = confidences[label_vector < 0]
 plt.figure()
-plt.hist(np.sort(face_confs), 100, facecolor='g', histtype='step', normed=1,label='faces')
-plt.hist(np.sort(non_face_confs), 100, facecolor='r', histtype='step',normed=1, label='non faces')
-#plt.plot([0, len(non_face_confs)], [0, 0], 'b', label='decision boundary')
+plt.hist(np.sort(face_confs), 100, facecolor='g', histtype='step', normed=1, label='faces')
+plt.hist(np.sort(non_face_confs), 100, facecolor='r', histtype='step', normed=1, label='non faces')
+# plt.plot([0, len(non_face_confs)], [0, 0], 'b', label='decision boundary')
 plt.xlabel('predicted score')
 plt.ylabel('Percentage of images')
 plt.legend();
@@ -131,7 +131,11 @@ confidences_2 = svm_2.decision_function(np.vstack((features_pos, features_neg)))
 # positive detection.
 
 # %%
-bboxes, confidences, image_ids = sc.run_detector(test_scn_path, svm, feature_params)
+dataset_samples = 10  # 方便快速debug
+im_filenames = sorted(glob(osp.join(test_scn_path, '*.jpg')))
+im_filenames = np.random.choice(im_filenames, dataset_samples, replace=False)
+
+bboxes, confidences, image_ids = sc.run_detector(test_scn_path, svm, feature_params, im_filenames=im_filenames)
 
 # %% [markdown]
 # Let's detect again using the classifier trained using hard negative examples. The results will be saved separately.
@@ -155,7 +159,8 @@ bboxes, confidences, image_ids = sc.run_detector(test_scn_path, svm, feature_par
 
 # %%
 gt_ids, gt_bboxes, gt_isclaimed, tp, fp, duplicate_detections = evaluate_detections(bboxes, confidences,
-                                                                                    image_ids, label_filename)
+                                                                                    image_ids, label_filename,
+                                                                                    im_filenames=im_filenames)
 plt.show()
 
 # %%
@@ -166,8 +171,6 @@ plt.show()
 # And then we show the detection results on the test scenes. By default we only show the results from the second classifier. You can also check the first classifier by uncommenting the first line.
 
 # %%
-visualize_detections_by_image(bboxes, confidences, image_ids, tp, fp, test_scn_path, label_filename)
+visualize_detections_by_image(bboxes, confidences, image_ids, tp, fp, test_scn_path, label_filename, im_filenames=im_filenames)
 # visualize_detections_by_image(bboxes_2, confidences_2, image_ids_2, tp_2, fp_2, test_scn_path, label_filename)
 plt.show()
-
-

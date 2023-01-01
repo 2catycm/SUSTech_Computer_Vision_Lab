@@ -70,7 +70,7 @@ def get_positive_features(train_path_pos, feature_params, threads=32):
 
     N = len(positive_files)
 
-    augmentation_num = feature_params.get('augmentation_num', 2)
+    augmentation_num = feature_params.get('augmentation_num', 4)
     augmentor = Augmentor(augmentation_num)
     feats = np.zeros((N * augmentation_num, n_cell * n_cell * 31), np.float32)
 
@@ -283,7 +283,7 @@ def mine_hard_negs(non_face_scn_path, svm, feature_params, num_samples, threads=
     return feats[y_pred == 1]  # 预测为1，实际上都是0，所以是false positive， 为hard negative。
 
 
-def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
+def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, im_filenames=None):
     """
     This function returns detections on all of the images in a given path. You
     will want to use non-maximum suppression on your detections or your
@@ -329,7 +329,8 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
     -   image_ids: List with N elements. image_ids[i] is the image file name
             for detection i. (not the full path, just 'albert.jpg')
     """
-    im_filenames = sorted(glob(osp.join(test_scn_path, '*.jpg')))
+    if im_filenames is None:
+        im_filenames = sorted(glob(osp.join(test_scn_path, '*.jpg')))
     bboxes = np.empty((0, 4))
     confidences = np.empty(0)
     image_ids = []
@@ -337,6 +338,7 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
     # number of top detections to feed to NMS
     topk = 15
     # topk = 150
+    # topk = 1500
 
     # params for HOG computation
     win_size = feature_params.get('template_size', 36)
@@ -351,12 +353,16 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
 
     # basic_scales = max(feature_params.get('basic_scales', 2), 0)  # 至少是1
     basic_scales = max(feature_params.get('basic_scales', 1), 1)  # 至少是1
-    scales = basic_scales + 3
+    # scales = basic_scales + 3
+    scales = basic_scales + 0
     k = (1 / scale_factor) ** (1 / basic_scales)
     sigma0 = feature_params.get('sigma0', 1.52)
+    # sigma0 = feature_params.get('sigma0', 0.2)
 
     svm_threshold = feature_params.get('svm_threshold', 0)
-    # svm_threshold = feature_params.get('svm_threshold', -10)
+    # svm_threshold = feature_params.get('svm_threshold', -4)
+    # svm_threshold = feature_params.get('svm_threshold', -3)
+    svm_threshold = feature_params.get('svm_threshold', -10)
     lock = Lock()
 
     # 准备遍历所有图片
@@ -393,7 +399,8 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
         def process_single_scale(octave_base, octave, scale):
             nonlocal cur_x_min, cur_y_min, cur_bboxes, cur_confidences, bar
             sigma = sigma0 * (k ** scale)  # 不需要+octave*basic_scales, 因为后面的cv resize会自动blur。
-            blured_im = cv2.GaussianBlur(octave_base, (0, 0), sigma)
+            # blured_im = cv2.GaussianBlur(octave_base, (0, 0), sigma)
+            blured_im = octave_base
             relative = ((1 / scale_factor) ** octave)
             # 对 blured_im 处理
             # 生成随机的坐标，然后在这些坐标上进行检测。
@@ -402,8 +409,9 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
             #                                                                                                  1] - win_size,
             #                                                                                              num_samples)
             # 随机不如择机
-            grid_size = int(math.sqrt(num_samples)/relative)
-            xs, ys = np.linspace(0, blured_im.shape[0] - win_size, grid_size, dtype=np.int), np.linspace(0, blured_im.shape[1] - win_size, grid_size, dtype=np.int)
+            grid_size = int(math.sqrt(num_samples) / relative)
+            xs, ys = np.linspace(0, blured_im.shape[0] - win_size, grid_size, dtype=np.int), \
+                     np.linspace(0, blured_im.shape[1] - win_size, grid_size, dtype=np.int)
             # for i, j in zip(xs, ys): # 错误写法
             for i in xs:
                 for j in ys:
@@ -416,20 +424,21 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
                     conf = svm.decision_function(feat)  # 到决策超平面的距离, 可以正可以负数。
                     # conf = svm.predict_proba(feat) # 需要开启svm的probability=True
                     if conf > svm_threshold:
-                        with lock:
-                            # 注意老师给的xy弄反了。所以我们只好正过来。
-                            cur_x_min = np.append(cur_x_min, int(j * relative))
-                            cur_y_min = np.append(cur_y_min, int(i * relative))
-                            cur_bboxes = np.append(cur_bboxes,
-                                                   (np.array([[j, i, j + win_size, i + win_size]]) * relative).astype(
-                                                       np.int),
-                                                   axis=0)
-                            cur_confidences = np.append(cur_confidences, conf)
+                        # if conf < svm_threshold:
+                        #     with lock:
+                        # 注意老师给的xy弄反了。所以我们只好正过来。
+                        cur_x_min = np.append(cur_x_min, int(j * relative))
+                        cur_y_min = np.append(cur_y_min, int(i * relative))
+                        cur_bboxes = np.append(cur_bboxes,
+                                               (np.array([[j, i, j + win_size, i + win_size]]) * relative).astype(
+                                                   np.int),
+                                               axis=0)
+                        cur_confidences = np.append(cur_confidences, conf)
 
         octave_bases = []
         for octave in range(octaves):
             octave_bases.append(octave_base)
-            octave_base = cv2.resize(octave_base, (0, 0), fx=scale_factor, fy=scale_factor)# resize对float没有问题。
+            octave_base = cv2.resize(octave_base, (0, 0), fx=scale_factor, fy=scale_factor)  # resize对float没有问题。
         # tasks = []
         # with futures.ThreadPoolExecutor(max_workers=threads) as executor:
         #     # 遍历所有的正样本。注意不是遍历train_path_pos，而是glob的结果——positive_files。
@@ -459,6 +468,7 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
         # can get higher recall with a lower threshold. You should not modify
         # anything in non_max_supr_bbox(). If you want to try your own NMS methods,
         # please create another function.
+        originally_found = len(cur_confidences)
 
         idsort = np.argsort(-cur_confidences)[:topk]
         cur_bboxes = cur_bboxes[idsort]
@@ -467,7 +477,8 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
         is_valid_bbox = non_max_suppression_bbox(cur_bboxes, cur_confidences,
                                                  im_shape, verbose=verbose)
         bar.set_description(
-            'Detecting faces in {:s}. Found {:d} box originally, after NMS, {:d} detections passed'.format(im_filename, len(cur_bboxes), sum(is_valid_bbox)))
+            'Detecting faces in {:s}. With octaves{:d}, Found {:d} box originally, after NMS, {:d} detections passed'.format(
+                im_filename, octaves, originally_found, sum(is_valid_bbox)))
         # 如果没有box，就不需要做任何事情。做了会报错。
         if sum(is_valid_bbox) == 0:
             return

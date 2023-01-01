@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import cv2
 import os.path as osp
@@ -205,7 +207,7 @@ def visualize_hog(svm, feature_params):
     ax.axis("off")
 
 
-def evaluate_detections(bboxes, confidences, image_ids, label_path, draw=True):
+def evaluate_detections(bboxes, confidences, image_ids, label_path, im_filenames=None, draw=True):
     """
     :param bboxes:
     :param confidences:
@@ -219,6 +221,8 @@ def evaluate_detections(bboxes, confidences, image_ids, label_path, draw=True):
     with open(label_path, 'r') as f:
         for line in f:
             gt_id, xmin, ymin, xmax, ymax = line.split(' ')
+            if im_filenames is not None and gt_id not in map(lambda x:Path(x).name, im_filenames):
+                continue
             gt_ids.append(gt_id)
             gt_bboxes.append([float(xmin), float(ymin), float(xmax), float(ymax)])
     gt_bboxes = np.vstack(gt_bboxes)
@@ -294,7 +298,7 @@ def evaluate_detections(bboxes, confidences, image_ids, label_path, draw=True):
 
 
 def visualize_detections_by_image(bboxes, confidences, image_ids, tp, fp,
-                                  test_scn_path, label_filename, onlytp=False):
+                                  test_scn_path, label_filename, im_filenames=None, onlytp=False):
     """
     Visuaize the detection bounding boxes and ground truth on images
     :param bboxes: N x 4 numpy matrix, where N is the number of detections. Each
@@ -314,6 +318,8 @@ def visualize_detections_by_image(bboxes, confidences, image_ids, tp, fp,
     with open(label_filename, 'r') as f:
         for line in f:
             gt_id, xmin, ymin, xmax, ymax = line.split(' ')
+            if im_filenames is not None and gt_id not in map(lambda x: Path(x).name, im_filenames):
+                continue
             gt_ids.append(gt_id)
             gt_bboxes.append([float(xmin), float(ymin), float(xmax), float(ymax)])
     gt_bboxes = np.vstack(gt_bboxes)
