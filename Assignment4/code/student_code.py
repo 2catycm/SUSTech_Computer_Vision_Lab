@@ -364,16 +364,19 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
         im_id = osp.split(im_filename)[-1]
         im_shape = im.shape
 
-        cur_x_min = np.empty(0)
-        cur_y_min = np.empty(0)
-        cur_bboxes = np.empty((0, 4))
-        cur_confidences = np.empty(0)
+        cur_x_min = np.empty(0, np.int)
+        cur_y_min = np.empty(0, np.int)
+        cur_bboxes = np.empty((0, 4), np.int)
+        cur_confidences = np.empty(0, np.float)
 
         # create scale space HOG pyramid and return scores for prediction
 
         #######################################################################
         #                         YOUR CODE HERE                         #
         #######################################################################
+
+        num_samples = feature_params.get('num_samples', 100)
+
         # 至少两个。除win_size表示octave最多放缩到和win_size一样大。
         # debug经验：im_shape.min()是错的，因为是tuple类型。应该是min(im_shape)。
         octaves = max(feature_params.get('octaves', int(math.log2(min(im_shape) / win_size)) + 1), 1)  # 至少一次。
@@ -387,22 +390,27 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
 
                 relative = ((1 / scale_factor) ** octave)
                 # 对 blured_im 处理
-                for i in range(blured_im.shape[0] - win_size):
-                    for j in range(blured_im.shape[1] - win_size):
-                        hog_feature = vl_hog.hog(blured_im[i:i + win_size, j:j + win_size],
-                                                 cell_size=cell_size,
-                                                 n_orientations=num_orientations,
-                                                 bilinear_interpolation=bilinear_interpolation
-                                                 )
-                        feat = hog_feature.reshape(1, -1)  # 注意，必须前面有个1，变成二维的，svm才能识别。
-                        conf = svm.decision_function(feat)  # 到决策超平面的距离, 可以正可以负数。
-                        # conf = svm.predict_proba(feat) # 需要开启svm的probability=True
-                        if conf > svm_threshold:
-                            cur_x_min = np.append(cur_x_min, i * relative)
-                            cur_y_min = np.append(cur_y_min, j * relative)
-                            cur_bboxes = np.append(cur_bboxes,
-                                                   np.array([[i, j, i + win_size, j + win_size]]) * relative, axis=0)
-                            cur_confidences = np.append(cur_confidences, conf)
+                # 生成随机的坐标，然后在这些坐标上进行检测。
+                xs, ys = np.random.randint(0, blured_im.shape[0] - win_size, num_samples), np.random.randint(0,
+                                                                                                             blured_im.shape[
+                                                                                                                 1] - win_size,
+                                                                                                             num_samples)
+                for i, j in zip(xs, ys):
+                    hog_feature = vl_hog.hog(blured_im[i:i + win_size, j:j + win_size],
+                                             cell_size=cell_size,
+                                             n_orientations=num_orientations,
+                                             bilinear_interpolation=bilinear_interpolation
+                                             )
+                    feat = hog_feature.reshape(1, -1)  # 注意，必须前面有个1，变成二维的，svm才能识别。
+                    conf = svm.decision_function(feat)  # 到决策超平面的距离, 可以正可以负数。
+                    # conf = svm.predict_proba(feat) # 需要开启svm的probability=True
+                    if conf > svm_threshold:
+                        cur_x_min = np.append(cur_x_min, int(i * relative))
+                        cur_y_min = np.append(cur_y_min, int(j * relative))
+                        cur_bboxes = np.append(cur_bboxes,
+                                               (np.array([[i, j, i + win_size, j + win_size]]) * relative).astype(np.int),
+                                               axis=0)
+                        cur_confidences = np.append(cur_confidences, conf)
 
             octave_base = cv2.resize(octave_base, (0, 0), fx=scale_factor, fy=scale_factor)  # resize对float没有问题。
 
@@ -427,6 +435,9 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
                                                  im_shape, verbose=verbose)
 
         print('NMS done, {:d} detections passed'.format(sum(is_valid_bbox)))
+        # 如果没有box，就不需要做任何事情。做了会报错。
+        if sum(is_valid_bbox) == 0:
+            return
         cur_bboxes = cur_bboxes[is_valid_bbox]
         cur_confidences = cur_confidences[is_valid_bbox]
 
