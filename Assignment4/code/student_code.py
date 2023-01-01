@@ -5,8 +5,8 @@ import cyvlfeat as vlfeat
 from sklearn.model_selection import train_test_split, cross_val_score
 from tqdm import tqdm, trange
 
-from augmentation import Augmentor
-from utils import *
+from .augmentation import Augmentor
+from .utils import *
 import os.path as osp
 from glob import glob
 from random import shuffle
@@ -24,7 +24,6 @@ memory = joblib.Memory('./joblib_tmp', verbose=1)
 vl_hog = vlfeat.hog
 
 
-# @memory.cache
 def get_positive_features(train_path_pos, feature_params, threads=32):
     """
     This function should return all positive training examples (faces) from
@@ -60,7 +59,15 @@ def get_positive_features(train_path_pos, feature_params, threads=32):
     cell_size = feature_params.get('hog_cell_size', 6)  # 一个grid cell的大小。是36的因数。
     num_orientations = feature_params.get('num_orientations ', 9)
     bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
+    augmentation_num = feature_params.get('augmentation_num', 4)
+    return get_positive_features_impl(train_path_pos, win_size, cell_size, num_orientations,
+                          bilinear_interpolation, augmentation_num, threads=32)
 
+
+@memory.cache
+def get_positive_features_impl(train_path_pos, win_size, cell_size, num_orientations,
+                          bilinear_interpolation, augmentation_num,
+                          threads=32):
     positive_files = glob(osp.join(train_path_pos, '*.jpg'))
     ###########################################################################
     #                           YOUR CODE HERE                          #
@@ -70,7 +77,6 @@ def get_positive_features(train_path_pos, feature_params, threads=32):
 
     N = len(positive_files)
 
-    augmentation_num = feature_params.get('augmentation_num', 4)
     augmentor = Augmentor(augmentation_num)
     feats = np.zeros((N * augmentation_num, n_cell * n_cell * 31), np.float32)
 
@@ -114,40 +120,46 @@ def cv_image2vl_image(image):
     return image[:, :, ::-1].astype(np.float32)
 
 
-# 使用memory cache注意debug的时候要注释掉，不然会用上次的错误结果。
-# @memory.cache
 def get_random_negative_features(non_face_scn_path, feature_params, num_samples, threads=32):
     """
-    This function should return negative training examples (non-faces) from any
-    images in 'non_face_scn_path'. Images should be loaded in grayscale because
-    the positive training data is only available in grayscale (use
-    load_image_gray()).
+        This function should return negative training examples (non-faces) from any
+        images in 'non_face_scn_path'. Images should be loaded in grayscale because
+        the positive training data is only available in grayscale (use
+        load_image_gray()).
 
-    Useful functions:
-    -   vlfeat.hog.hog(im, cell_size): computes HoG features
+        Useful functions:
+        -   vlfeat.hog.hog(im, cell_size): computes HoG features
 
-    Args:
-    -   non_face_scn_path: string. This directory contains many images which
-            have no faces in them.
-    -   feature_params: dictionary of HoG feature computation parameters. See
-            the documentation for get_positive_features() for more information.
-    -   num_samples: number of negatives to be mined. It is not important for
-            the function to find exactly 'num_samples' non-face features. For
-            example, you might try to sample some number from each image, but
-            some images might be too small to find enough.
+        Args:
+        -   non_face_scn_path: string. This directory contains many images which
+                have no faces in them.
+        -   feature_params: dictionary of HoG feature computation parameters. See
+                the documentation for get_positive_features() for more information.
+        -   num_samples: number of negatives to be mined. It is not important for
+                the function to find exactly 'num_samples' non-face features. For
+                example, you might try to sample some number from each image, but
+                some images might be too small to find enough.
 
-    Returns:
-    -   N x D matrix where N is the number of non-faces and D is the feature
-            dimensionality, which would be (feature_params['template_size'] /
-            feature_params['hog_cell_size'])^2 * 31 if you're using the default
-            hog parameters.
-    """
+        Returns:
+        -   N x D matrix where N is the number of non-faces and D is the feature
+                dimensionality, which would be (feature_params['template_size'] /
+                feature_params['hog_cell_size'])^2 * 31 if you're using the default
+                hog parameters.
+        """
     # params for HOG computation
     win_size = feature_params.get('template_size', 36)
     cell_size = feature_params.get('hog_cell_size', 6)
     num_orientations = feature_params.get('num_orientations ', 9)  # 注意名字和hog里面不一样。
     bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
 
+    return get_random_negative_features_impl(non_face_scn_path, win_size, cell_size, num_orientations,
+                                        bilinear_interpolation, num_samples, threads=threads)
+
+
+# 使用memory cache注意debug的时候要注释掉，不然会用上次的错误结果。
+@memory.cache
+def get_random_negative_features_impl(non_face_scn_path, win_size, cell_size, num_orientations,
+                                 bilinear_interpolation, num_samples, threads=32):
     negative_files = glob(osp.join(non_face_scn_path, '*.jpg'))
 
     ###########################################################################
@@ -157,7 +169,8 @@ def get_random_negative_features(non_face_scn_path, feature_params, num_samples,
     n_cell = np.ceil(win_size / cell_size).astype('int')
     N = len(negative_files)
 
-    sample_per_files = num_samples // N
+    # sample_per_files = num_samples // N
+    sample_per_files = num_samples  # 每个都10000个才好
 
     feats = np.zeros((sample_per_files * N, n_cell * n_cell * 31), np.float32)
 
@@ -223,6 +236,7 @@ def cross_validate_classifier(features_pos, features_neg, C):
     return scores.mean()
 
 
+@memory.cache
 def train_classifier(features_pos, features_neg, C):
     """
     This function trains a linear SVM classifier on the positive and negative
@@ -255,7 +269,6 @@ def train_classifier(features_pos, features_neg, C):
     return svm
 
 
-@memory.cache
 def mine_hard_negs(non_face_scn_path, svm, feature_params, num_samples, threads=32):
     """
     This function is pretty similar to get_random_negative_features(). The only
@@ -285,88 +298,99 @@ def mine_hard_negs(non_face_scn_path, svm, feature_params, num_samples, threads=
 
 def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, im_filenames=None):
     """
-    This function returns detections on all of the images in a given path. You
-    will want to use non-maximum suppression on your detections or your
-    performance will be poor (the evaluation counts a duplicate detection as
-    wrong). The non-maximum suppression is done on a per-image basis. The
-    starter code includes a call to a provided non-max suppression function.
+        This function returns detections on all of the images in a given path. You
+        will want to use non-maximum suppression on your detections or your
+        performance will be poor (the evaluation counts a duplicate detection as
+        wrong). The non-maximum suppression is done on a per-image basis. The
+        starter code includes a call to a provided non-max suppression function.
 
-    The placeholder version of this code will return random bounding boxes in
-    each test image. It will even do non-maximum suppression on the random
-    bounding boxes to give you an example of how to call the function.
+        The placeholder version of this code will return random bounding boxes in
+        each test image. It will even do non-maximum suppression on the random
+        bounding boxes to give you an example of how to call the function.
 
-    Your actual code should convert each test image to HoG feature space with
-    a _single_ call to vlfeat.hog.hog() for each scale. Then step over the HoG
-    cells, taking groups of cells that are the same size as your learned
-    template, and classifying them. If the classification is above some
-    confidence, keep the detection and then pass all the detections for an
-    image to non-maximum suppression. For your initial debugging, you can
-    operate only at a single scale and you can skip calling non-maximum
-    suppression. Err on the side of having a low confidence threshold (even
-    less than zero) to achieve high enough recall.
+        Your actual code should convert each test image to HoG feature space with
+        a _single_ call to vlfeat.hog.hog() for each scale. Then step over the HoG
+        cells, taking groups of cells that are the same size as your learned
+        template, and classifying them. If the classification is above some
+        confidence, keep the detection and then pass all the detections for an
+        image to non-maximum suppression. For your initial debugging, you can
+        operate only at a single scale and you can skip calling non-maximum
+        suppression. Err on the side of having a low confidence threshold (even
+        less than zero) to achieve high enough recall.
 
-    Args:
-    -   test_scn_path: (string) This directory contains images which may or
-            may not have faces in them. This function should work for the
-            MIT+CMU test set but also for any other images (e.g. class photos).
-    -   svm: A trained sklearn.svm.LinearSVC object
-    -   feature_params: dictionary of HoG feature computation parameters.
-        You can include various parameters in it. Two defaults are:
-            -   template_size: (default 36) The number of pixels spanned by
-            each train/test template.
-            -   hog_cell_size: (default 6) The number of pixels in each HoG
-            cell. template size should be evenly divisible by hog_cell_size.
-            Smaller HoG cell sizes tend to work better, but they make things
-            slowerbecause the feature dimensionality increases and more
-            importantly the step size of the classifier decreases at test time.
-    -   verbose: prints out debug information if True
+        Args:
+        -   test_scn_path: (string) This directory contains images which may or
+                may not have faces in them. This function should work for the
+                MIT+CMU test set but also for any other images (e.g. class photos).
+        -   svm: A trained sklearn.svm.LinearSVC object
+        -   feature_params: dictionary of HoG feature computation parameters.
+            You can include various parameters in it. Two defaults are:
+                -   template_size: (default 36) The number of pixels spanned by
+                each train/test template.
+                -   hog_cell_size: (default 6) The number of pixels in each HoG
+                cell. template size should be evenly divisible by hog_cell_size.
+                Smaller HoG cell sizes tend to work better, but they make things
+                slowerbecause the feature dimensionality increases and more
+                importantly the step size of the classifier decreases at test time.
+        -   verbose: prints out debug information if True
 
-    Returns:
-    -   bboxes: N x 4 numpy array. N is the number of detections.
-            bboxes(i,:) is [x_min, y_min, x_max, y_max] for detection i.
-    -   confidences: (N, ) size numpy array. confidences(i) is the real-valued
-            confidence of detection i.
-    -   image_ids: List with N elements. image_ids[i] is the image file name
-            for detection i. (not the full path, just 'albert.jpg')
-    """
+        Returns:
+        -   bboxes: N x 4 numpy array. N is the number of detections.
+                bboxes(i,:) is [x_min, y_min, x_max, y_max] for detection i.
+        -   confidences: (N, ) size numpy array. confidences(i) is the real-valued
+                confidence of detection i.
+        -   image_ids: List with N elements. image_ids[i] is the image file name
+                for detection i. (not the full path, just 'albert.jpg')
+        """
+    # number of top detections to feed to NMS
+    # topk = 15
+    topk = feature_params.get('topk', 150)
+    # topk = 1500
+    win_size = feature_params.get('template_size', 36)
+    cell_size = feature_params.get('hog_cell_size', 6)
+    # cell_size = feature_params.get('hog_cell_size', 4)
+    num_orientations = feature_params.get('num_orientations ', 9)  # 注意名字和hog里面不一样。
+    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
+
+    # scale_factor = feature_params.get('scale_factor', 0.65)
+    scale_factor = feature_params.get('scale_factor', 0.9)
+    basic_scales = max(feature_params.get('basic_scales', 1), 1)  # 至少是1
+    # basic_scales = max(feature_params.get('basic_scales', 2), 0)  # 至少是1
+
+    sigma0 = feature_params.get('sigma0', 1.52)
+    # sigma0 = feature_params.get('sigma0', 0.2)
+    # svm_threshold = feature_params.get('svm_threshold', 0)
+    svm_threshold = feature_params.get('svm_threshold', -4)
+    # svm_threshold = feature_params.get('svm_threshold', -2)
+    # svm_threshold = feature_params.get('svm_threshold', -10)
+
+    basic_octaves = feature_params.get('basic_octaves', 1)
+    return run_detector_impl(test_scn_path, svm, topk, win_size, cell_size, num_orientations, bilinear_interpolation, scale_factor,
+                 basic_scales, sigma0, svm_threshold, basic_octaves,
+                             verbose=verbose, threads=threads, im_filenames=im_filenames)
+
+
+@memory.cache
+def run_detector_impl(test_scn_path, svm, topk, win_size, cell_size, num_orientations, bilinear_interpolation, scale_factor,
+                 basic_scales, sigma0, svm_threshold, basic_octaves,
+                 verbose=False, threads=32, im_filenames=None):
     if im_filenames is None:
         im_filenames = sorted(glob(osp.join(test_scn_path, '*.jpg')))
     bboxes = np.empty((0, 4))
     confidences = np.empty(0)
     image_ids = []
 
-    # number of top detections to feed to NMS
-    # topk = 15
-    topk = 150
-    # topk = 1500
-
     # params for HOG computation
-    win_size = feature_params.get('template_size', 36)
-    cell_size = feature_params.get('hog_cell_size', 6)
-    # cell_size = feature_params.get('hog_cell_size', 4)
-    # scale_factor = feature_params.get('scale_factor', 0.65)
-    scale_factor = feature_params.get('scale_factor', 0.9)
     template_size = int(win_size / cell_size)
     #######################################################################
     #                         YOUR CODE HERE                         #
     #######################################################################
-    num_orientations = feature_params.get('num_orientations ', 9)  # 注意名字和hog里面不一样。
-    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
 
-    # basic_scales = max(feature_params.get('basic_scales', 2), 0)  # 至少是1
-    basic_scales = max(feature_params.get('basic_scales', 1), 1)  # 至少是1
-    # scales = basic_scales + 3
-    scales = basic_scales + 0
+    scales = basic_scales + 3
+    # scales = basic_scales + 0
     k = (1 / scale_factor) ** (1 / basic_scales)
-    sigma0 = feature_params.get('sigma0', 1.52)
-    # sigma0 = feature_params.get('sigma0', 0.2)
 
-    # svm_threshold = feature_params.get('svm_threshold', 0)
-    svm_threshold = feature_params.get('svm_threshold', -4)
-    # svm_threshold = feature_params.get('svm_threshold', -2)
-    # svm_threshold = feature_params.get('svm_threshold', -10)
-    lock = Lock()
-
+    # lock = Lock()
     # 准备遍历所有图片
     bar = tqdm(enumerate(im_filenames))
 
@@ -387,14 +411,12 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
         #######################################################################
         #                         YOUR CODE HERE                         #
         #######################################################################
-
-        num_samples = feature_params.get('num_samples', 1000)
-
         # 至少两个。除win_size表示octave最多放缩到和win_size一样大。
         # debug经验：im_shape.min()是错的，因为是tuple类型。应该是min(im_shape)。
         # octaves = max(feature_params.get('octaves', 0), 1) # 至少一次。
+
         octaves = max(
-            feature_params.get('octaves', int(math.log2(min(im_shape) / win_size) / math.log2(1 / scale_factor)) + 1),
+            int(math.log2(min(im_shape) / win_size) / math.log2(1 / scale_factor)) + basic_octaves,
             1)  # 至少一次。
         octave_base_image = im  # 基准图像
         if min(im_shape) < win_size:
@@ -404,7 +426,7 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
             nonlocal cur_x_min, cur_y_min, cur_bboxes, cur_confidences, bar
             sigma = sigma0 * (k ** scale)  # 不需要+octave*basic_scales, 因为后面的cv resize会自动blur。
             blured_im = cv2.GaussianBlur(octave_base_image, (0, 0), sigma)
-            blured_im = octave_base_image
+            # blured_im = octave_base_image
             relative = ((1 / scale_factor) ** octave)
 
             hog_whole_image = vl_hog.hog(blured_im,
@@ -412,8 +434,8 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
                                          n_orientations=num_orientations,
                                          bilinear_interpolation=bilinear_interpolation)
             # template_size 就是在hog空间上窗口的大小
-            rows = hog_whole_image.shape[0] - template_size
-            cols = hog_whole_image.shape[1] - template_size
+            rows = max(hog_whole_image.shape[0] - template_size, 1)
+            cols = max(hog_whole_image.shape[1] - template_size, 1)
             feats = np.empty((rows * cols, template_size * template_size * 31), float)
             for i in range(rows):
                 for j in range(cols):

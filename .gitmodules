@@ -1,3 +1,13 @@
 [submodule "Assignment3/Assignment3_code/mycode/PythonSIFT"]
 	path = Assignment3/Assignment3_code/mycode/PythonSIFT
 	url = https://github.com/rmislam/PythonSIFT.git
+[submodule "nni"]
+	path = nni
+	url = https://github.com/Microsoft/nni.git
+
+[submodule "ref/SUSTech-CS308"]
+	path = ref/SUSTech-CS308
+	url = https://github.com/zh-plus/SUSTech-CS308.git
+[submodule "ref/CS308-Computer-Vision"]
+	path = ref/CS308-Computer-Vision
+	url = https://github.com/Kemo-Huang/CS308-Computer-Vision.git

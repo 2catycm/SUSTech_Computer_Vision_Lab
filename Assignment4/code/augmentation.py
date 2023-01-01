@@ -15,9 +15,8 @@ class Augmentor:
 
     def gen_augmented_image(self, cv_image):
         yield cv_image
-        method = np.random.choice(self.methods, self.num_augmented_images)
-        for m in method:
-            yield m(cv_image)
+        for i in range(self.num_augmented_images):
+            yield np.random.choice(self.methods, 1)(cv_image)
 
     @staticmethod
     def vl2cv(vl_image):

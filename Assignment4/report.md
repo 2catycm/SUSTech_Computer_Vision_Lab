@@ -138,13 +138,82 @@ False Negative rate = 0.000%
 
 ## Bonus Report (If you have done any bonus problem, state them here)
 
-### 使用有意义的公式来计算金字塔的层数
+### SIFT风格金字塔
+
+#### 使用有意义的公式来计算金字塔的层数
 
 ```
 octaves = max(
     feature_params.get('octaves', int(math.log2(min(im_shape) / win_size) / math.log2(1 / scale_factor)) + 1),
     1)  # 至少一次。
+    
 ```
+
+### 学习使用半自动调参和自动调参工具进行调参
+
+### 准备工作
+
+我们首先定义要优化的参数有哪些，总结如下：
+
+```python
+feature_params = {'template_size': 36, 'hog_cell_size': 6,
+                  'num_orientations': 9, 'bilinear_interpolation': False,
+                  'augmentation_num': 4,
+                  'num_negative_examples': 100,
+                  'topk': 150,
+                  'scale_factor':0.9,
+                  'basic_scales':1,
+                  'sigma0':1.52,
+                  'svm_threshold':-4,
+                  'basic_octaves':10,
+                  }
+
+```
+
+超参数优化时很费时间的，为了避免无意义的重复计算，这个时候`joblib`就很重要了。
+
+比如，超参数优化只是修改了topk这个参数，只在第三个方法中用到，这个时候前两个方法的运行结果可以不修改，如果使用默认的joblib，就会重新调用前两个方法。因此，我们在不破坏原本代码接口的前提下，添加一个重载方法，让重载方法使用`joblib`缓存，达到节省大量时间的目的。
+
+- 修改前：
+
+```python
+@memory.cache
+def get_positive_features(train_path_pos, feature_params, threads=32):
+    # params for HOG computation
+    win_size = feature_params.get('template_size', 36)  # 图像的大小，改不了。
+    cell_size = feature_params.get('hog_cell_size', 6)  # 一个grid cell的大小。是36的因数。
+    num_orientations = feature_params.get('num_orientations ', 9)
+    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
+    augmentation_num = feature_params.get('augmentation_num', 4)
+    pass
+```
+
+
+
+- 修改后
+
+```python
+def get_positive_features(train_path_pos, feature_params, threads=32):
+    # params for HOG computation
+    win_size = feature_params.get('template_size', 36)  # 图像的大小，改不了。
+    cell_size = feature_params.get('hog_cell_size', 6)  # 一个grid cell的大小。是36的因数。
+    num_orientations = feature_params.get('num_orientations ', 9)
+    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
+    augmentation_num = feature_params.get('augmentation_num', 4)
+    return get_positive_features_impl(train_path_pos,  win_size, cell_size, num_orientations,
+                          bilinear_interpolation, augmentation_num, feature_params, threads=32)pass
+@memory.cache  
+def get_positive_features_impl(train_path_pos, win_size, cell_size, num_orientations,
+                          bilinear_interpolation, augmentation_num,
+                          threads=32):
+    pass
+```
+
+注意到Python虽然号称简洁，但是坚决不支持重载，委员会认为python没有必要重载。因此，需要写impl方法。
+
+#### wandb学习使用
+
+#### 微软NNI学习使用
 
 ### 除了mine_hard_negative, 还尝试了mine_hard_positive
 
