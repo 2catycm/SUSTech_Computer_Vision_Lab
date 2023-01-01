@@ -68,7 +68,7 @@ False Negative rate = 0.000%
 
 ![image-20230101195509596](report.assets/image-20230101195509596.png)
 
-我们调整topk为1500, 终于，有了一点点对的。
+我们调整topk为1500, 终于，有了一点点对的。但是其他的框无法被过滤掉，因为他们排在正确的框的前面。
 
 ![image-20230101194703602](report.assets/image-20230101194703602.png)
 
@@ -131,9 +131,22 @@ False Negative rate = 0.000%
 
 经过和同学交流，发现了一个普遍规律
 
-- 实现
+- 实现正确的同学不需要调参，multiscale瞬间就有0.35， 而不是0.01.
+- 实现错误的同学基本上都是犯了一个错误：
+  - **在原图上运行滑动窗口**，然后计算hog
+- 而实现正确的同学
 
 ## Bonus Report (If you have done any bonus problem, state them here)
+
+### 使用有意义的公式来计算金字塔的层数
+
+```
+octaves = max(
+    feature_params.get('octaves', int(math.log2(min(im_shape) / win_size) / math.log2(1 / scale_factor)) + 1),
+    1)  # 至少一次。
+```
+
+### 除了mine_hard_negative, 还尝试了mine_hard_positive
 
 
 

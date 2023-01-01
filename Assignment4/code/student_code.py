@@ -24,7 +24,7 @@ memory = joblib.Memory('./joblib_tmp', verbose=1)
 vl_hog = vlfeat.hog
 
 
-@memory.cache
+# @memory.cache
 def get_positive_features(train_path_pos, feature_params, threads=32):
     """
     This function should return all positive training examples (faces) from
@@ -115,7 +115,7 @@ def cv_image2vl_image(image):
 
 
 # 使用memory cache注意debug的时候要注释掉，不然会用上次的错误结果。
-@memory.cache
+# @memory.cache
 def get_random_negative_features(non_face_scn_path, feature_params, num_samples, threads=32):
     """
     This function should return negative training examples (non-faces) from any
@@ -336,14 +336,16 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
     image_ids = []
 
     # number of top detections to feed to NMS
-    topk = 15
-    # topk = 150
+    # topk = 15
+    topk = 150
     # topk = 1500
 
     # params for HOG computation
     win_size = feature_params.get('template_size', 36)
     cell_size = feature_params.get('hog_cell_size', 6)
-    scale_factor = feature_params.get('scale_factor', 0.65)
+    # cell_size = feature_params.get('hog_cell_size', 4)
+    # scale_factor = feature_params.get('scale_factor', 0.65)
+    scale_factor = feature_params.get('scale_factor', 0.9)
     template_size = int(win_size / cell_size)
     #######################################################################
     #                         YOUR CODE HERE                         #
@@ -359,10 +361,10 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
     sigma0 = feature_params.get('sigma0', 1.52)
     # sigma0 = feature_params.get('sigma0', 0.2)
 
-    svm_threshold = feature_params.get('svm_threshold', 0)
-    # svm_threshold = feature_params.get('svm_threshold', -4)
-    # svm_threshold = feature_params.get('svm_threshold', -3)
-    svm_threshold = feature_params.get('svm_threshold', -10)
+    # svm_threshold = feature_params.get('svm_threshold', 0)
+    svm_threshold = feature_params.get('svm_threshold', -4)
+    # svm_threshold = feature_params.get('svm_threshold', -2)
+    # svm_threshold = feature_params.get('svm_threshold', -10)
     lock = Lock()
 
     # 准备遍历所有图片
@@ -391,83 +393,56 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
         # 至少两个。除win_size表示octave最多放缩到和win_size一样大。
         # debug经验：im_shape.min()是错的，因为是tuple类型。应该是min(im_shape)。
         # octaves = max(feature_params.get('octaves', 0), 1) # 至少一次。
-        octaves = max(feature_params.get('octaves', int(math.log2(min(im_shape) / win_size)) + 1), 1)  # 至少一次。
-        octave_base = im  # 基准图像
+        octaves = max(
+            feature_params.get('octaves', int(math.log2(min(im_shape) / win_size) / math.log2(1 / scale_factor)) + 1),
+            1)  # 至少一次。
+        octave_base_image = im  # 基准图像
         if min(im_shape) < win_size:
-            octave_base = cv2.resize(im, (max(im_shape[0], win_size), max(im_shape[1], win_size)))
+            octave_base_image = cv2.resize(im, (max(im_shape[0], win_size), max(im_shape[1], win_size)))
 
-        def process_single_scale(octave_base, octave, scale):
+        def process_single_scale(octave_base_image, octave, scale):
             nonlocal cur_x_min, cur_y_min, cur_bboxes, cur_confidences, bar
             sigma = sigma0 * (k ** scale)  # 不需要+octave*basic_scales, 因为后面的cv resize会自动blur。
-            # blured_im = cv2.GaussianBlur(octave_base, (0, 0), sigma)
-            blured_im = octave_base
+            blured_im = cv2.GaussianBlur(octave_base_image, (0, 0), sigma)
+            blured_im = octave_base_image
             relative = ((1 / scale_factor) ** octave)
-            # 对 blured_im 处理
-            # 生成随机的坐标，然后在这些坐标上进行检测。
-            # xs, ys = np.random.randint(0, blured_im.shape[0] - win_size, num_samples), np.random.randint(0,
-            #                                                                                              blured_im.shape[
-            #                                                                                                  1] - win_size,
-            #                                                                                              num_samples)
-            # 随机不如择机
-            grid_size = int(math.sqrt(num_samples) / relative)
-            xs, ys = np.linspace(0, blured_im.shape[0] - win_size, grid_size, dtype=np.int), \
-                     np.linspace(0, blured_im.shape[1] - win_size, grid_size, dtype=np.int)
-            # for i, j in zip(xs, ys): # 错误写法
-            for i in xs:
-                for j in ys:
-                    hog_feature = vl_hog.hog(blured_im[i:i + win_size, j:j + win_size],
-                                             cell_size=cell_size,
-                                             n_orientations=num_orientations,
-                                             bilinear_interpolation=bilinear_interpolation
-                                             )
-                    feat = hog_feature.reshape(1, -1)  # 注意，必须前面有个1，变成二维的，svm才能识别。
-                    conf = svm.decision_function(feat)  # 到决策超平面的距离, 可以正可以负数。
-                    # conf = svm.predict_proba(feat) # 需要开启svm的probability=True
-                    if conf > svm_threshold:
-                        # if conf < svm_threshold:
-                        #     with lock:
-                        # 注意老师给的xy弄反了。所以我们只好正过来。
-                        cur_x_min = np.append(cur_x_min, int(j * relative))
-                        cur_y_min = np.append(cur_y_min, int(i * relative))
-                        cur_bboxes = np.append(cur_bboxes,
-                                               (np.array([[j, i, j + win_size, i + win_size]]) * relative).astype(
-                                                   np.int),
-                                               axis=0)
-                        cur_confidences = np.append(cur_confidences, conf)
+
+            hog_whole_image = vl_hog.hog(blured_im,
+                                         cell_size=cell_size,
+                                         n_orientations=num_orientations,
+                                         bilinear_interpolation=bilinear_interpolation)
+            # template_size 就是在hog空间上窗口的大小
+            rows = hog_whole_image.shape[0] - template_size
+            cols = hog_whole_image.shape[1] - template_size
+            feats = np.empty((rows * cols, template_size * template_size * 31), float)
+            for i in range(rows):
+                for j in range(cols):
+                    win_hog_feat = hog_whole_image[i:i + template_size, j:j + template_size, :]
+                    feats[i * cols + j] = win_hog_feat.reshape(1, -1)
+            confs = svm.decision_function(feats)
+            is_face = confs > svm_threshold
+            grid_indexes = np.nonzero(confs > svm_threshold)[0]
+            cur_x_hog, cur_y_hog = grid_indexes // cols, grid_indexes % cols  # 注意都是cols。
+            cur_y_min, cur_x_min = cur_x_hog.reshape(-1, 1) * cell_size, cur_y_hog.reshape(-1,
+                                                                                           1) * cell_size  # 注意题目验证代码给的xy弄反了。所以我们只好正过来。
+            cur_bboxes = (np.hstack(
+                (cur_x_min, cur_y_min, cur_x_min + win_size, cur_y_min + win_size)) * relative).astype(int)
+            cur_x_min, cur_y_min = cur_bboxes[:, 0], cur_bboxes[:, 1]
+            cur_confidences = confs[is_face]
 
         octave_bases = []
         for octave in range(octaves):
-            octave_bases.append(octave_base)
-            octave_base = cv2.resize(octave_base, (0, 0), fx=scale_factor, fy=scale_factor)  # resize对float没有问题。
-        # tasks = []
-        # with futures.ThreadPoolExecutor(max_workers=threads) as executor:
-        #     # 遍历所有的正样本。注意不是遍历train_path_pos，而是glob的结果——positive_files。
-        #     for octave in range(octaves):
-        #         for scale in range(scales):
-        #             tasks.append(
-        #                 executor.submit(
-        #                     process_single_scale,
-        #                     octave_bases[octave], octave, scale
-        #                 )
-        #             )
-        #
-        #     for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
-        #         pass  # 等待所有任务完成
+            octave_bases.append(octave_base_image.copy())
+            octave_base_image = cv2.resize(octave_base_image, (0, 0), fx=scale_factor,
+                                           fy=scale_factor)  # resize对float没有问题。
         for octave in range(octaves):
             for scale in range(scales):
                 process_single_scale(octave_bases[octave], octave, scale)
+
         #######################################################################
         #                          END OF YOUR CODE                           #
         #######################################################################
 
-        ### non-maximum suppression ###
-        # non_max_supr_bbox() can actually get somewhat slow with thousands of
-        # initial detections. You could pre-filter the detections by confidence,
-        # e.g. a detection with confidence -1.1 will probably never be
-        # meaningful. You probably _don't_ want to threshold at 0.0, though. You
-        # can get higher recall with a lower threshold. You should not modify
-        # anything in non_max_supr_bbox(). If you want to try your own NMS methods,
-        # please create another function.
         originally_found = len(cur_confidences)
 
         idsort = np.argsort(-cur_confidences)[:topk]
@@ -487,27 +462,10 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32, 
         cur_bboxes = cur_bboxes[is_valid_bbox]
         cur_confidences = cur_confidences[is_valid_bbox]
 
-        # 防止多线程冲突
-        # with lock:
-        #     bboxes = np.vstack((bboxes, cur_bboxes))
-        #     confidences = np.hstack((confidences, cur_confidences))
-        #     image_ids.extend([im_id] * len(cur_confidences))
         bboxes = np.vstack((bboxes, cur_bboxes))
         confidences = np.hstack((confidences, cur_confidences))
         image_ids.extend([im_id] * len(cur_confidences))
 
-    # tasks = []
-    # with futures.ThreadPoolExecutor(max_workers=threads) as executor:
-    #     # 遍历所有的正样本。注意不是遍历train_path_pos，而是glob的结果——positive_files。
-    #     for i, path in bar:
-    #         tasks.append(
-    #             executor.submit(
-    #                 process_single_image,
-    #                 i, path
-    #             )
-    #         )
-    #     for task in tqdm(futures.as_completed(tasks), total=len(tasks)):
-    #         pass  # 等待所有任务完成
     for idx, im_filename in bar:
         process_single_image(idx, im_filename)
 
