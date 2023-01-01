@@ -2,7 +2,8 @@ from concurrent import futures
 
 import numpy as np
 import cyvlfeat as vlfeat
-from tqdm import tqdm
+from sklearn.model_selection import train_test_split, cross_val_score
+from tqdm import tqdm, trange
 
 from augmentation import Augmentor
 from utils import *
@@ -12,10 +13,15 @@ from random import shuffle
 from sklearn.svm import LinearSVC
 
 import cv2
+import math
+
+from threading import Lock
 
 import joblib
 
 memory = joblib.Memory('./joblib_tmp', verbose=1)
+
+vl_hog = vlfeat.hog
 
 
 @memory.cache
@@ -60,10 +66,10 @@ def get_positive_features(train_path_pos, feature_params, threads=32):
     #                           YOUR CODE HERE                          #
     ###########################################################################
 
-    n_cell = win_size // cell_size  # 有几个grid cell。
+    n_cell = np.ceil(win_size / cell_size).astype('int')
+
     N = len(positive_files)
 
-    hog = vlfeat.hog
     augmentation_num = feature_params.get('augmentation_num', 2)
     augmentor = Augmentor(augmentation_num)
     feats = np.zeros((N * augmentation_num, n_cell * n_cell * 31), np.float32)
@@ -72,10 +78,10 @@ def get_positive_features(train_path_pos, feature_params, threads=32):
         # 使用数据增强。将原始数据进行旋转，平移，缩放，镜像等操作，得到更多的正样本
         for j, image in enumerate(augmentor.gen_augmented_image(cv2.imread(file))):
             # 使用HOG特征提取器，提取特征。
-            hog_feature = hog.hog(cv_image2vl_image(image),
-                                  cell_size=cell_size,
-                                  n_orientations=num_orientations,
-                                  bilinear_interpolation=bilinear_interpolation)
+            hog_feature = vl_hog.hog(cv_image2vl_image(image),
+                                     cell_size=cell_size,
+                                     n_orientations=num_orientations,
+                                     bilinear_interpolation=bilinear_interpolation)
             index = i * augmentation_num + j
             feats[index] = hog_feature.reshape(-1)
 
@@ -148,7 +154,7 @@ def get_random_negative_features(non_face_scn_path, feature_params, num_samples,
     #                           YOUR CODE HERE                          #
     ###########################################################################
 
-    n_cell = win_size // cell_size
+    n_cell = np.ceil(win_size / cell_size).astype('int')
     N = len(negative_files)
 
     sample_per_files = num_samples // N
@@ -193,6 +199,30 @@ def get_random_negative_features(non_face_scn_path, feature_params, num_samples,
     return feats
 
 
+def cross_validate_classifier(features_pos, features_neg, C):
+    ###########################################################################
+    #                          My CODE HERE                          #
+    ###########################################################################
+    svm = LinearSVC(C=C)
+    X = np.vstack((features_pos, features_neg))
+    y = np.hstack((np.ones(features_pos.shape[0]), np.zeros(features_neg.shape[0])))
+    # 如果不shuffle，那么正负样本会在一起，导致训练集和测试集都是正样本。
+    # 但是sklearn默认自带shuffle，所以不用担心。
+    # Xy = np.hstack((X, y.reshape(-1, 1)))
+    # np.random.shuffle(Xy)
+    # X = Xy[:, :-1]
+    # y = Xy[:, -1]
+    # 5折交叉验证
+    cv = 10
+    n_jobs = -1
+    # scores = cross_val_score(svm, X, y, scoring='recall', cv=cv, n_jobs=n_jobs)
+    # scores = cross_val_score(svm, X, y, scoring='roc_auc', cv=cv, n_jobs=n_jobs)
+    scores = cross_val_score(svm, X, y, scoring='average_precision', cv=cv, n_jobs=n_jobs)
+    # scores = cross_val_score(svm, X, y, scoring='balanced_accuracy_score', cv=cv, n_jobs=n_jobs)
+    # scores = cross_val_score(svm, X, y, scoring='f1', cv=10, n_jobs=n_jobs)
+    return scores.mean()
+
+
 def train_classifier(features_pos, features_neg, C):
     """
     This function trains a linear SVM classifier on the positive and negative
@@ -210,10 +240,13 @@ def train_classifier(features_pos, features_neg, C):
             on the positive and negative features.
     """
     ###########################################################################
-    #                           TODO: YOUR CODE HERE                          #
+    #                          YOUR CODE HERE                          #
     ###########################################################################
 
-    svm = PseudoSVM(10, features_pos.shape[1])
+    svm = LinearSVC(C=C)
+    X = np.vstack((features_pos, features_neg))
+    y = np.hstack((np.ones(features_pos.shape[0]), np.zeros(features_neg.shape[0])))
+    svm.fit(X, y)
 
     ###########################################################################
     #                             END OF YOUR CODE                            #
@@ -222,7 +255,8 @@ def train_classifier(features_pos, features_neg, C):
     return svm
 
 
-def mine_hard_negs(non_face_scn_path, svm, feature_params):
+@memory.cache
+def mine_hard_negs(non_face_scn_path, svm, feature_params, num_samples, threads=32):
     """
     This function is pretty similar to get_random_negative_features(). The only
     difference is that instead of returning all the extracted features, you only
@@ -243,28 +277,13 @@ def mine_hard_negs(non_face_scn_path, svm, feature_params):
     -   N x D matrix where N is the number of non-faces which are
             false-positive and D is the feature dimensionality.
     """
-
-    # params for HOG computation
-    win_size = feature_params.get('template_size', 36)
-    cell_size = feature_params.get('hog_cell_size', 6)
-
-    negative_files = glob(osp.join(non_face_scn_path, '*.jpg'))
-
-    ###########################################################################
-    #                           TODO: YOUR CODE HERE                          #
-    ###########################################################################
-
-    n_cell = np.ceil(win_size / cell_size).astype('int')
-    feats = np.random.rand(len(negative_files), n_cell * n_cell * 31)
-
-    ###########################################################################
-    #                             END OF YOUR CODE                            #
-    ###########################################################################
-
-    return feats
+    # My code starts
+    feats = get_random_negative_features(non_face_scn_path, feature_params, num_samples, threads=threads)
+    y_pred = svm.predict(feats)
+    return feats[y_pred == 1]  # 预测为1，实际上都是0，所以是false positive， 为hard negative。
 
 
-def run_detector(test_scn_path, svm, feature_params, verbose=False):
+def run_detector(test_scn_path, svm, feature_params, verbose=False, threads=32):
     """
     This function returns detections on all of the images in a given path. You
     will want to use non-maximum suppression on your detections or your
@@ -323,24 +342,69 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False):
     cell_size = feature_params.get('hog_cell_size', 6)
     scale_factor = feature_params.get('scale_factor', 0.65)
     template_size = int(win_size / cell_size)
+    #######################################################################
+    #                         YOUR CODE HERE                         #
+    #######################################################################
+    num_orientations = feature_params.get('num_orientations ', 9)  # 注意名字和hog里面不一样。
+    bilinear_interpolation = feature_params.get('bilinear_interpolation ', False)
 
-    for idx, im_filename in enumerate(im_filenames):
+    basic_scales = max(feature_params.get('basic_scales', 2), 0)  # 至少是0
+    scales = basic_scales + 3
+    k = (1 / scale_factor) ** (1 / basic_scales)
+    sigma0 = feature_params.get('sigma0', 1.52)
+
+    svm_threshold = feature_params.get('svm_threshold', 0)
+    lock = Lock()
+
+    def process_single_image(idx, im_filename):
+        nonlocal bboxes, confidences, image_ids
+        # 本函数对单张图片进行检测
         print('Detecting faces in {:s}'.format(im_filename))
         im = load_image_gray(im_filename)
         im_id = osp.split(im_filename)[-1]
         im_shape = im.shape
+
+        cur_x_min = np.empty(0)
+        cur_y_min = np.empty(0)
+        cur_bboxes = np.empty((0, 4))
+        cur_confidences = np.empty(0)
+
         # create scale space HOG pyramid and return scores for prediction
 
         #######################################################################
-        #                        TODO: YOUR CODE HERE                         #
+        #                         YOUR CODE HERE                         #
         #######################################################################
+        # 至少两个。除win_size表示octave最多放缩到和win_size一样大。
+        # debug经验：im_shape.min()是错的，因为是tuple类型。应该是min(im_shape)。
+        octaves = max(feature_params.get('octaves', int(math.log2(min(im_shape) / win_size)) + 1), 1)  # 至少一次。
+        octave_base = im  # 基准图像
+        if min(im_shape) < win_size:
+            octave_base = cv2.resize(im, (max(im_shape[0], win_size), max(im_shape[1], win_size)))
+        for octave in trange(octaves):
+            for scale in range(scales):
+                sigma = sigma0 * (k ** scale)  # 不需要+octave*basic_scales, 因为后面的cv resize会自动blur。
+                blured_im = cv2.GaussianBlur(octave_base, (0, 0), sigma)
 
-        cur_x_min = (np.random.rand(15, 1) * im_shape[1]).astype('int')
-        cur_y_min = (np.random.rand(15, 1) * im_shape[0]).astype('int')
-        cur_bboxes = np.hstack([cur_x_min, cur_y_min, \
-                                (cur_x_min + np.random.rand(15, 1) * 50).astype('int'), \
-                                (cur_y_min + np.random.rand(15, 1) * 50).astype('int')])
-        cur_confidences = np.random.rand(15) * 4 - 2
+                relative = ((1 / scale_factor) ** octave)
+                # 对 blured_im 处理
+                for i in range(blured_im.shape[0] - win_size):
+                    for j in range(blured_im.shape[1] - win_size):
+                        hog_feature = vl_hog.hog(blured_im[i:i + win_size, j:j + win_size],
+                                                 cell_size=cell_size,
+                                                 n_orientations=num_orientations,
+                                                 bilinear_interpolation=bilinear_interpolation
+                                                 )
+                        feat = hog_feature.reshape(1, -1)  # 注意，必须前面有个1，变成二维的，svm才能识别。
+                        conf = svm.decision_function(feat)  # 到决策超平面的距离, 可以正可以负数。
+                        # conf = svm.predict_proba(feat) # 需要开启svm的probability=True
+                        if conf > svm_threshold:
+                            cur_x_min = np.append(cur_x_min, i * relative)
+                            cur_y_min = np.append(cur_y_min, j * relative)
+                            cur_bboxes = np.append(cur_bboxes,
+                                                   np.array([[i, j, i + win_size, j + win_size]]) * relative, axis=0)
+                            cur_confidences = np.append(cur_confidences, conf)
+
+            octave_base = cv2.resize(octave_base, (0, 0), fx=scale_factor, fy=scale_factor)  # resize对float没有问题。
 
         #######################################################################
         #                          END OF YOUR CODE                           #
@@ -366,8 +430,12 @@ def run_detector(test_scn_path, svm, feature_params, verbose=False):
         cur_bboxes = cur_bboxes[is_valid_bbox]
         cur_confidences = cur_confidences[is_valid_bbox]
 
+        # 防止多线程冲突
         bboxes = np.vstack((bboxes, cur_bboxes))
         confidences = np.hstack((confidences, cur_confidences))
         image_ids.extend([im_id] * len(cur_confidences))
+
+    for idx, im_filename in enumerate(im_filenames):
+        process_single_image(idx, im_filename)
 
     return bboxes, confidences, image_ids
